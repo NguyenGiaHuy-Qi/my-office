@@ -68,7 +68,6 @@ async function run() {
 
   // --- Scenario 2.1: Real Claude Code task lifecycle via /event hook ---
   console.log('  -> Executing Claude Code Task (Session: claude-sess-op-1)...');
-  const t0 = Date.now();
   // 1. Session start
   let r = await fetch(`${BASE}/event`, {
     method: 'POST',

@@ -8,6 +8,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { executeIsolatedProcess, createExecutionPlan } from './execution-runner.mjs';
+import { isSafePath } from './fs-utils.mjs';
 
 /**
  * Computes SHA-256 hash of a file.
@@ -78,11 +79,14 @@ export const skillAdapter = {
     // Write provided files or default SKILL.md
     if (Object.keys(files).length > 0) {
       for (const [relPath, content] of Object.entries(files)) {
-        const dest = path.join(sourceDir, relPath);
+        const dest = path.resolve(sourceDir, relPath);
+        if (!isSafePath(sourceDir, dest)) {
+          throw new Error(`Security violation: Invalid file path '${relPath}' traverses outside destination.`);
+        }
         fs.mkdirSync(path.dirname(dest), { recursive: true });
         fs.writeFileSync(dest, content, 'utf8');
         managedFiles.push({
-          path: path.join('source', relPath).replace(/\\/g, '/'),
+          path: path.relative(stagingDir, dest).replace(/\\/g, '/'),
           sha256: hashFile(dest),
           size: Buffer.byteLength(content, 'utf8'),
         });
@@ -156,11 +160,14 @@ export const mcpAdapter = {
     const managedFiles = [];
 
     for (const [relPath, content] of Object.entries(files)) {
-      const dest = path.join(sourceDir, relPath);
+      const dest = path.resolve(sourceDir, relPath);
+      if (!isSafePath(sourceDir, dest)) {
+        throw new Error(`Security violation: Invalid file path '${relPath}' traverses outside destination.`);
+      }
       fs.mkdirSync(path.dirname(dest), { recursive: true });
       fs.writeFileSync(dest, content, 'utf8');
       managedFiles.push({
-        path: path.join('source', relPath).replace(/\\/g, '/'),
+        path: path.relative(stagingDir, dest).replace(/\\/g, '/'),
         sha256: hashFile(dest),
         size: Buffer.byteLength(content, 'utf8'),
       });
@@ -241,11 +248,14 @@ export const nodeCliAdapter = {
     const managedFiles = [];
 
     for (const [relPath, content] of Object.entries(files)) {
-      const dest = path.join(sourceDir, relPath);
+      const dest = path.resolve(sourceDir, relPath);
+      if (!isSafePath(sourceDir, dest)) {
+        throw new Error(`Security violation: Invalid file path '${relPath}' traverses outside destination.`);
+      }
       fs.mkdirSync(path.dirname(dest), { recursive: true });
       fs.writeFileSync(dest, content, 'utf8');
       managedFiles.push({
-        path: path.join('source', relPath).replace(/\\/g, '/'),
+        path: path.relative(stagingDir, dest).replace(/\\/g, '/'),
         sha256: hashFile(dest),
         size: Buffer.byteLength(content, 'utf8'),
       });
@@ -318,11 +328,14 @@ export const gitSnapshotAdapter = {
     const managedFiles = [];
 
     for (const [relPath, content] of Object.entries(files)) {
-      const dest = path.join(sourceDir, relPath);
+      const dest = path.resolve(sourceDir, relPath);
+      if (!isSafePath(sourceDir, dest)) {
+        throw new Error(`Security violation: Invalid file path '${relPath}' traverses outside destination.`);
+      }
       fs.mkdirSync(path.dirname(dest), { recursive: true });
       fs.writeFileSync(dest, content, 'utf8');
       managedFiles.push({
-        path: path.join('source', relPath).replace(/\\/g, '/'),
+        path: path.relative(stagingDir, dest).replace(/\\/g, '/'),
         sha256: hashFile(dest),
         size: Buffer.byteLength(content, 'utf8'),
       });

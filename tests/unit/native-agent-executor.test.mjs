@@ -1,4 +1,4 @@
-import test, { describe, it } from 'node:test';
+import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -335,6 +335,7 @@ describe('Phase 8 & 8.1 — Native Agent Execution Adapter & Hardening Tests', (
   it('ensures read-only native execution profile disallows file write and execution tools', () => {
     // Inspect command assembly in native-agent-executor for claude-code
     const executor = createNativeAgentExecutor();
+    assert.ok(executor);
     // Verify that the command configuration disallows Bash, Edit, Write, NotebookEdit, and MCP
     const mockStep = {
       step_id: 'ro_step',

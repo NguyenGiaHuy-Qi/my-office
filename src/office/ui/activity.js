@@ -26,7 +26,7 @@ const collapsedDates = new Set();
 let query = '';
 let toastEl;
 let toastTimer;
-export function toast(msg, ms = 3400) { toastEl.textContent = msg; toastEl.hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => { toastEl.hidden = true; }, ms); }
+export function toast(msg, ms = 3400) { toastEl ||= (typeof document !== 'undefined' ? document.getElementById('toast') : null); if (toastEl) { toastEl.textContent = msg; toastEl.hidden = false; } clearTimeout(toastTimer); toastTimer = setTimeout(() => { if (toastEl) toastEl.hidden = true; }, ms); }
 const ATT = new Set(['wait', 'ask', 'fail', 'cired']);
 export const cap = (t) => (t ? t[0].toUpperCase() + t.slice(1) : t);
 // Consecutive events from the same session (or subagent) within four minutes share one card; alerts stand alone

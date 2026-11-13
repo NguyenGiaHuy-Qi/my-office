@@ -24,4 +24,6 @@ playwright-report/
 # stray local files
 /Microsoft/
 /tmp/
+/myoffice/
+/scratch/
 *.bak-formal
