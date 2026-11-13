@@ -1,7 +1,7 @@
 // Static markup for My Office Autonomous Operations Workspace Drawer (Phase 4)
 export default function AutonomousDrawer() {
   return (
-    <aside className="drawer drawer--wide drawer--autonomous" id="dr-autonomous" hidden aria-label="Autonomous Operations Workspace">
+    <aside className="drawer drawer--wide drawer--workbench drawer--autonomous" id="dr-autonomous" hidden aria-label="Autonomous Operations Workspace">
       <header className="dr-head">
         <div className="dr-title">
           <h2>Autonomous Operations Workspace</h2>

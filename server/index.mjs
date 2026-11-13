@@ -1457,9 +1457,15 @@ function readJson(req, max = 64_000) {
     const chunks = []; let size = 0;
     req.on('data', (c) => { size += c.length; if (size <= max) chunks.push(c); });
     req.on('end', () => { try { resolve(JSON.parse(Buffer.concat(chunks).toString('utf8'))); } catch { resolve(null); } });
+    req.on('error', () => { resolve(null); });
   });
 }
-const json = (res, code, obj) => res.writeHead(code, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }).end(JSON.stringify(obj));
+const json = (res, code, obj) => {
+  if (res.writableEnded || res.headersSent) return;
+  try {
+    res.writeHead(code, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }).end(JSON.stringify(obj));
+  } catch { /* connection dropped */ }
+};
 const ACTION_LOG = path.join(DATA_DIR, 'actions.log');
 /* ---------- closing idle Claude sessions on a timer (the Mac drawer's switch; off unless turned on) ----------
    Every 5 minutes: the sessions idle longer than the chosen hours, never one that is working, waiting for an answer
@@ -3489,7 +3495,7 @@ const server = http.createServer((req, res) => {
       if (!mac && !prefs.get('phoneTasks')) { json(res, 403, { ok: false, code: 'notAllowed', message: tr('chat.task.notAllowed') }); return; }
       const [code, out] = await (url.pathname === '/api/tasks/steer' ? steerTo : giveWork)(b, mac ? 'mac' : `phone ${clientIp(req)}`);
       json(res, code, out);
-    });
+    }).catch((err) => json(res, 500, { ok: false, error: err.message }));
     return;
   }
   if ((url.pathname === '/api/codex/runs' || url.pathname === '/api/codex/runs/stop') && req.method === 'POST') {
@@ -3555,7 +3561,7 @@ const server = http.createServer((req, res) => {
       const r = await rewriter.rewrite({ text: b?.text, lang: pickLang(b?.lang), photos: b?.photos });
       fsp.appendFile(ACTION_LOG, `${new Date().toISOString()} rewrite ${mac ? 'mac' : `phone ${clientIp(req)}`} ${r.ok ? 'ok' : r.code} ${String(b?.text || '').length} chars\n`).catch(() => {});   // (how long, never what it says)
       json(res, r.ok ? 200 : r.code === 'busy' || r.code === 'tooMany' ? 429 : 409, r.ok ? { ok: true, text: r.text } : { ok: false, code: r.code, message: tr(`chat.coach.why.${r.code}`, { detail: r.detail || '' }) });
-    });
+    }).catch((err) => json(res, 500, { ok: false, error: err.message }));
     return;
   }
   if (url.pathname === '/api/chat' && req.method === 'POST') {   // the group chat: { op, … } (say and photo only from this computer)
@@ -3576,7 +3582,7 @@ const server = http.createServer((req, res) => {
           answer: (Array.isArray(b.answer) ? b.answer : []).slice(0, 4).map((a) => ({ key: str(a?.key, 30).replace(/[^\w]/g, ''), chance: Math.min(1, Math.max(0, Number(a?.chance ?? 1))) })).filter((a) => a.key) });
       } else { json(res, 400, { ok: false }); return; }
       json(res, 200, { ok: true });
-    });
+    }).catch((err) => json(res, 400, { ok: false, error: err.message }));
     return;
   }
   if (req.method === 'POST' && url.pathname === '/api/rc') {   // every new session with Remote Control: { on } (this computer only)
@@ -3585,12 +3591,12 @@ const server = http.createServer((req, res) => {
       const ok = setRcAtStartup(!!b?.on);
       fsp.appendFile(ACTION_LOG, `${new Date().toISOString()} remote control at startup ${b?.on ? 'on' : 'off'} -> ${ok ? 'ok' : 'failed'}\n`).catch(() => {});
       json(res, ok ? 200 : 500, { ok, rc: rcAtStartup() });
-    });
+    }).catch((err) => json(res, 500, { ok: false, error: err.message }));
     return;
   }
   if (req.method === 'POST' && url.pathname === '/api/tunnel/domain') {   // a fixed address on your domain: { host } ('' = back to a quick tunnel; this computer only)
     if (!isLoopback(req) || !sameOriginOf(req) || !String(req.headers['content-type'] || '').startsWith('application/json')) { json(res, 403, { ok: false, message: tr('server.api.approveOnMac') }); return; }
-    readJson(req).then((b) => { const r = setTunnelDomain(b?.host); json(res, r.ok ? 200 : 400, { ...tunnelOut(), ...r }); });
+    readJson(req).then((b) => { const r = setTunnelDomain(b?.host); json(res, r.ok ? 200 : 400, { ...tunnelOut(), ...r }); }).catch((err) => json(res, 400, { ok: false, error: err.message }));
     return;
   }
   if (url.pathname === '/api/tunnel' && (req.method === 'POST' || req.method === 'GET')) {   // the office from anywhere: { on } (this computer only)
@@ -3602,7 +3608,7 @@ const server = http.createServer((req, res) => {
       fsp.appendFile(ACTION_LOG, `${new Date().toISOString()} tunnel ${b?.on ? 'on' : 'off'}\n`).catch(() => {});
       if (b?.on) startTunnel(); else stopTunnel();
       json(res, 200, tunnelOut());
-    });
+    }).catch((err) => json(res, 500, { ok: false, error: err.message }));
     return;
   }
   if (req.method === 'POST' && url.pathname === '/api/phone') {   // approving from a phone: { approve } (this computer only)
@@ -3613,7 +3619,7 @@ const server = http.createServer((req, res) => {
       fsp.appendFile(ACTION_LOG, `${new Date().toISOString()} phone approve ${b?.approve ? 'on' : 'off'}\n`).catch(() => {});
       broadcast({ k: 'phone', approve: !!b?.approve, tasks: !!prefs.get('phoneTasks') });
       json(res, 200, { ok: true, approve: !!b?.approve });
-    });
+    }).catch((err) => json(res, 500, { ok: false, error: err.message }));
     return;
   }
   if (req.method === 'POST' && url.pathname === '/api/sys/auto') {   // close idle sessions on a timer: { hours: 0 | 2 | 4 | 8 }
@@ -3624,7 +3630,7 @@ const server = http.createServer((req, res) => {
       fsp.appendFile(ACTION_LOG, `${new Date().toISOString()} ${req.socket.remoteAddress} auto-close ${prefs.autoClose()}h\n`).catch(() => {});
       json(res, 200, { ok: true, hours: prefs.autoClose() });
       autoCloseIdle().catch(() => {});
-    });
+    }).catch((err) => json(res, 500, { ok: false, error: err.message }));
     return;
   }
   if (req.method === 'POST' && url.pathname === '/api/sys/action') {
@@ -3636,7 +3642,7 @@ const server = http.createServer((req, res) => {
       const result = await sysAction(body).catch((err) => ({ ok: false, message: String(err.message || err) }));
       fsp.appendFile(ACTION_LOG, `${new Date().toISOString()} ${req.socket.remoteAddress} ${JSON.stringify(body)} -> ${JSON.stringify(result)}\n`).catch(() => {});
       json(res, 200, result);
-    });
+    }).catch((err) => json(res, 500, { ok: false, error: err.message }));
     return;
   }
   if (url.pathname === '/api/panel' && req.method === 'GET') {   // the menu bar's reading (menubar/): this computer only
@@ -3653,7 +3659,7 @@ const server = http.createServer((req, res) => {
       if (choice === 'skip') giveBack(p.id, 'skip'); else settlePerm(p.id, JSON.stringify(permDecision(p, choice)));
       fsp.appendFile(ACTION_LOG, `${new Date().toISOString()} notification perm ${choice} ${p.name} ${p.tool} ${p.detail.slice(0, 120)}\n`).catch(() => {});
       json(res, 200, { ok: true });
-    });
+    }).catch((err) => json(res, 500, { ok: false, error: err.message }));
     return;
   }
   if (url.pathname === '/api/macapprove') {   // Settings → More: approve from the Mac's notifications, on or off (this computer only)
@@ -3664,7 +3670,7 @@ const server = http.createServer((req, res) => {
       if (b?.on === false && !officeFocused()) for (const [id, x] of [...pending]) if (!x.long && !x.phone) keepForPhone(id, 'macoff');   // (nobody else holds them now)
       fsp.appendFile(ACTION_LOG, `${new Date().toISOString()} mac notification approve ${macApprove() ? 'on' : 'off'}\n`).catch(() => {});
       json(res, 200, { ok: true, on: macApprove() });
-    });
+    }).catch((err) => json(res, 500, { ok: false, error: err.message }));
     return;
   }
   if (req.method === 'POST' && url.pathname === '/api/panel/open') {   // the small panel's buttons: the office (or its list view) in the browser (this computer only)
@@ -3672,7 +3678,7 @@ const server = http.createServer((req, res) => {
     readJson(req).then((b) => {
       openUrl(`http://localhost:${PORT}/${b?.what === '2d' ? '?view=2d' : ''}`);
       json(res, 200, { ok: true });
-    });
+    }).catch((err) => json(res, 500, { ok: false, error: err.message }));
     return;
   }
   if (req.method === 'POST' && url.pathname === '/api/open') {
@@ -3683,7 +3689,7 @@ const server = http.createServer((req, res) => {
       const r = await openWindow(s);
       fsp.appendFile(ACTION_LOG, `${new Date().toISOString()} open ${s?.name || '?'} -> ${r.ok ? r.app : r.message}\n`).catch(() => {});
       json(res, 200, r);
-    });
+    }).catch((err) => json(res, 500, { ok: false, error: err.message }));
     return;
   }
   if (req.method === 'POST' && (url.pathname === '/api/stranded/open' || url.pathname === '/api/stranded/remove')) {   // (this computer only, from this page)
@@ -3700,7 +3706,7 @@ const server = http.createServer((req, res) => {
       const at = r.w ? tilde(r.w.path) : '';
       json(res, 200, r.ok ? { ok: true, message: tr(r.w.branch ? 'mac.stranded.removed' : 'mac.stranded.removedDetached', { dir: at, branch: r.w.branch }) }
         : { ok: false, code: r.code, message: tr(`mac.stranded.refused.${r.code}`, { why: r.why || '' }) });
-    });
+    }).catch((err) => json(res, 500, { ok: false, error: err.message }));
     return;
   }
   if (req.method === 'POST' && /^\/api\/accounts(\/(code|cancel|login|rename|use|auto|order|move|renew))?$/.test(url.pathname)) {   // (this computer only, from this page)
@@ -3751,7 +3757,7 @@ const server = http.createServer((req, res) => {
       if (url.pathname === '/api/accounts/code') L.child.stdin.write(`${String(b?.code || '').trim().slice(0, 400)}\n`);
       else { L.state = 'cancelled'; L.child.kill(); }
       json(res, 200, { ok: true });
-    });
+    }).catch((err) => json(res, 500, { ok: false, error: err.message }));
     return;
   }
   if (req.method === 'POST' && /^\/api\/ai\/(codex|ag)\/(use|add|cancel|remove|rename|auto|order|later|read)$/.test(url.pathname)) {   // (this computer only, from this page)
@@ -3779,7 +3785,7 @@ const server = http.createServer((req, res) => {
         else if (op === 'order') r = ag.setOrder(b?.order);
       }
       json(res, 200, { ...r, ...(r?.code && { message: tr(`server.ai.${r.code}`, { n: r.n || 0, app: AG_APP }) }) });
-    });
+    }).catch((err) => json(res, 500, { ok: false, error: err.message }));
     return;
   }
   if (req.method === 'POST' && url.pathname === '/api/tenure') {   // this computer only: { op: 'config', days } (Settings → More), { op: 'farewell' | 'official', name } (the page held it)
@@ -3794,7 +3800,7 @@ const server = http.createServer((req, res) => {
       if (b?.op === 'official') { json(res, 200, { ok: tenure.markOfficial(String(b.name || '').slice(0, 200)) }); return; }
       if (b?.op === 'farewell') { const name = String(b.name || '').slice(0, 200); json(res, 200, { ok: tenure.markFarewell(name, farewellDays(), liveProjects().has(name)) }); return; }
       json(res, 400, { ok: false });
-    });
+    }).catch((err) => json(res, 500, { ok: false, error: err.message }));
     return;
   }
   if (req.method === 'POST' && url.pathname === '/api/denied') {   // a refused call's card: { id, op: 'retry' | 'keep' }
@@ -3807,7 +3813,7 @@ const server = http.createServer((req, res) => {
       settle(b?.op === 'retry');
       fsp.appendFile(ACTION_LOG, `${new Date().toISOString()} denied ${b?.op === 'retry' ? 'retry' : 'keep'} from ${mac ? 'mac' : 'phone'}\n`).catch(() => {});
       json(res, 200, { ok: true });
-    });
+    }).catch((err) => json(res, 500, { ok: false, error: err.message }));
     return;
   }
   if (req.method === 'POST' && url.pathname === '/api/pins') {   // the session drawer's "Ghi nhớ": { id (the session), op 'add' | 'del', text | pin }
@@ -4345,6 +4351,15 @@ process.on('exit', () => {
   otel.saveSync();
 });
 for (const sig of ['SIGTERM', 'SIGINT']) process.on(sig, () => { saveStateSync(); process.exit(0); });
+process.on('unhandledRejection', (reason) => {
+  console.error('[server] Unhandled promise rejection guarded:', reason);
+});
+process.on('uncaughtException', (err) => {
+  console.error('[server] Uncaught exception guarded:', err);
+});
+server.on('clientError', (err, socket) => {
+  try { socket.destroy(err); } catch { /* ignore */ }
+});
 
 server.listen(PORT, HOST, () => {
   syncLan();

@@ -209,9 +209,10 @@ export function createExecutionJournal({
 
   /**
    * Replays journal events sequentially and invokes applyFn for deterministic rebuild.
+   * By default replays all events across the full WAL sequence without arbitrary truncation.
    */
-  function replayJournal({ fromSeq = 0, toSeq = Infinity, applyFn = null } = {}) {
-    const events = readEvents({ fromSeq, toSeq });
+  function replayJournal({ fromSeq = 0, toSeq = Infinity, limit = Infinity, applyFn = null } = {}) {
+    const events = readEvents({ fromSeq, toSeq, limit });
     const applied = [];
 
     for (const ev of events) {

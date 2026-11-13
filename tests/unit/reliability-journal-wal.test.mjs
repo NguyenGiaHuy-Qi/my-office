@@ -16,7 +16,6 @@ import os from 'node:os';
 import { createExecutionJournal } from '../../server/reliability/journal.mjs';
 import {
   WAL_EVENT_TYPES,
-  CRITICAL_WAL_EVENTS,
   verifyEventChecksum,
 } from '../../server/reliability/contracts.mjs';
 
@@ -122,12 +121,12 @@ describe('Phase 5 Reliability: Execution Journal WAL & Torn-Write Fault Injectio
   test('Scenario 11: Journal replay with duplicate events applies deduplication cleanly', () => {
     const journal = createExecutionJournal({ walPath, checkpointDir });
 
-    const ev1 = journal.appendEvent({
+    journal.appendEvent({
       eventType: WAL_EVENT_TYPES.EXECUTION_DISPATCHED,
       aggregateId: 'exec-100',
       payload: { instruction: 'run migration' },
     });
-    const ev2 = journal.appendEvent({
+    journal.appendEvent({
       eventType: WAL_EVENT_TYPES.APPROVAL_RESOLVED,
       aggregateId: 'appr-200',
       payload: { status: 'approved' },

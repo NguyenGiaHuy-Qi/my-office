@@ -226,10 +226,6 @@ describe('Autonomous Scheduler: Concurrency Bounds, Self-Healing & Failure Detec
   });
 
   test('Integrates with Quality Gate Engine to block completion when mandatory gates fail', () => {
-    const scheduler = createAutonomousScheduler({
-      storePath: schedulerStorePath,
-    });
-
     const taskId = 'mt-gate-test';
     const mockFailingGates = {
       evaluateGates: () => ({

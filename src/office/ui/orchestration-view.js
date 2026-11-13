@@ -1,6 +1,7 @@
 // Client controller for My Office Multi-Agent Task Orchestration Workspace.
 // Coordinates DAG composition, dependency graph visualization, execution board, and handoffs.
 import { TOKEN } from '../net/live.js';
+import { toast } from './activity.js';
 
 let drawer = null;
 let currentTab = 'masters';
@@ -61,7 +62,7 @@ export function setupOrchestrationView() {
   document.getElementById('btn-trigger-review')?.addEventListener('click', async () => {
     const targetId = activeMasterId || (cachedMasters.length > 0 ? cachedMasters[0].masterTaskId : null);
     if (!targetId) {
-      alert('Please select or create a Master Task first.');
+      toast('Please select or create a Master Task first.');
       return;
     }
     try {
@@ -80,17 +81,17 @@ export function setupOrchestrationView() {
         }),
       });
       const data = await res.json();
-      if (!data.ok) alert(`Review error: ${data.error}`);
+      if (!data.ok) toast(`Review error: ${data.error}`);
       else loadQaView(targetId);
     } catch (e) {
-      alert(e.message);
+      toast(e.message);
     }
   });
 
   document.getElementById('btn-create-remediation')?.addEventListener('click', async () => {
     const targetId = activeMasterId || (cachedMasters.length > 0 ? cachedMasters[0].masterTaskId : null);
     if (!targetId) {
-      alert('Please select a Master Task first.');
+      toast('Please select a Master Task first.');
       return;
     }
     try {
@@ -98,7 +99,7 @@ export function setupOrchestrationView() {
       const findData = await findRes.json();
       const openIds = (findData.findings || []).filter((f) => ['open', 'fixing'].includes(f.status)).map((f) => f.findingId);
       if (!openIds.length) {
-        alert('No open findings requiring remediation.');
+        toast('No open findings requiring remediation.');
         return;
       }
       const remRes = await fetch(`/api/qa/remediate${q()}`, {
@@ -107,13 +108,13 @@ export function setupOrchestrationView() {
         body: JSON.stringify({ masterTaskId: targetId, findingIds: openIds }),
       });
       const remData = await remRes.json();
-      if (!remData.ok) alert(`Remediation error: ${remData.error}`);
+      if (!remData.ok) toast(`Remediation error: ${remData.error}`);
       else {
-        alert(`Created remediation subtask: ${remData.plan.remediationSubtaskId}`);
+        toast(`Created remediation subtask: ${remData.plan.remediationSubtaskId}`);
         loadQaView(targetId);
       }
     } catch (e) {
-      alert(e.message);
+      toast(e.message);
     }
   });
 
@@ -259,11 +260,11 @@ function renderMasterTasks() {
           loadMasterTasks();
           switchTab('board');
         } else {
-          alert(`Start failed: ${data.error || 'Unknown error'}`);
+          toast(`Start failed: ${data.error || 'Unknown error'}`);
           btn.disabled = false;
         }
       } catch (err) {
-        alert(`Error: ${err.message}`);
+        toast(`Error: ${err.message}`);
         btn.disabled = false;
       }
     });
@@ -279,9 +280,12 @@ function renderMasterTasks() {
             method: 'POST',
           });
           const data = await res.json();
-          if (data.ok) loadMasterTasks();
+          if (data.ok) {
+            toast(`Cancelled Master Task ${id}`);
+            loadMasterTasks();
+          }
         } catch (err) {
-          alert(`Error: ${err.message}`);
+          toast(`Error: ${err.message}`);
         }
       }
     });
@@ -357,7 +361,7 @@ async function handleCreateMasterSubmit() {
   const cards = container?.querySelectorAll('.subtask-build-card') || [];
 
   if (!cards.length) {
-    alert('Please add at least one subtask.');
+    toast('Please add at least one subtask.');
     return;
   }
 
@@ -673,10 +677,13 @@ async function loadQaView(masterId = null) {
                 body: JSON.stringify({ reason, authorizedBy: 'user' }),
               });
               const d = await r.json();
-              if (!d.ok) alert(`Error: ${d.error}`);
-              else loadQaView(targetMasterId);
+              if (!d.ok) toast(`Error: ${d.error}`);
+              else {
+                toast('Risk accepted.');
+                loadQaView(targetMasterId);
+              }
             } catch (e) {
-              alert(e.message);
+              toast(e.message);
             }
           });
         });
