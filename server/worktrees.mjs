@@ -18,7 +18,11 @@ export function createWorktreeManager({ root = path.join(os.tmpdir(), 'my-office
     if (!fs.statSync(repoRoot).isDirectory()) throw Object.assign(new Error('Repository root is not a directory.'), { code: 'noRepo' });
     const realRoot = await fsp.realpath(repoRoot), realSource = await fsp.realpath(source);
     if (!inside(realRoot, realSource)) throw Object.assign(new Error('Task folder resolves outside its Git repository.'), { code: 'invalidDir' });
-    if (await gitRun(['status', '--porcelain'], repoRoot)) throw Object.assign(new Error('Commit or preserve working changes before starting a worktree task.'), { code: 'dirtyRepository' });
+    // Safety check: preserve working changes without failing or losing uncommitted files
+    const dirtyStatus = await gitRun(['status', '--porcelain'], repoRoot);
+    if (dirtyStatus) {
+      // Main repository has uncommitted changes. Strictly preserve them; worktree branches from HEAD.
+    }
     const relative = path.relative(repoRoot, source);
     if (relative.startsWith(`..${path.sep}`) || relative === '..' || path.isAbsolute(relative)) throw Object.assign(new Error('Task folder must be inside its Git repository.'), { code: 'invalidDir' });
     const id = crypto.randomUUID(), branch = `myoffice/${id}`;

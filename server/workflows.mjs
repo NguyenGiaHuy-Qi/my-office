@@ -7,9 +7,19 @@ const TERMINAL = new Set(['completed', 'failed', 'cancelled', 'timeout', 'interr
 const ACTIVE = new Set(['dispatching', 'running']);
 const CLAIMED = new Set(['queued', 'dispatching', 'running']);
 const UNSUCCESSFUL = new Set(['failed', 'cancelled', 'timeout', 'interrupted', 'incomplete', 'blocked']);
-const PROVIDERS = new Set(['claude', 'codex-cli']);
+const PROVIDERS = new Set(['claude', 'claude-code', 'codex-cli', 'codex', 'antigravity', 'gemini']);
 const clip = (v, n) => redact(String(v ?? '').trim()).slice(0, n);
 const active = (t) => ACTIVE.has(t.status);
+
+export function pidAlive(pid, expectedStartTime = null) {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return e.code === 'EPERM';
+  }
+}
 
 export function createWorkflows({ file, maxConcurrent = 2, dispatch = async () => ({ ok: false, code: 'noProvider' }), cancel = () => false,
   onEvent = () => {}, now = Date.now } = {}) {
@@ -27,10 +37,6 @@ export function createWorkflows({ file, maxConcurrent = 2, dispatch = async () =
     } catch { /* retain the exclusive lock rather than let another process steal a live scheduler */ }
   }
 
-  function pidAlive(pid) {
-    if (!Number.isInteger(pid) || pid <= 0) return false;
-    try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; }
-  }
   function acquireLock() {
     if (!store) return true;
     fs.mkdirSync(path.dirname(store), { recursive: true });
@@ -74,17 +80,20 @@ export function createWorkflows({ file, maxConcurrent = 2, dispatch = async () =
   function persist() {
     if (!store || !lockOwned) return;
     const tmp = `${store}.${process.pid}.${ownerId}.tmp`;
+    const bak = `${store}.bak`;
     try {
       fs.mkdirSync(path.dirname(store), { recursive: true });
       refreshLock();
       fs.writeFileSync(tmp, JSON.stringify({ version: 2, workflows: [...workflows.values()].slice(-100) }), { mode: 0o600 });
+      try { if (fs.existsSync(store)) fs.copyFileSync(store, bak); } catch { /* backup */ }
       fs.renameSync(tmp, store);
     } catch (e) { console.error('workflow persistence', e.message); try { fs.unlinkSync(tmp); } catch { /* absent */ } }
   }
   const publicWorkflow = (w) => w ? structuredClone(w) : null;
   const getTask = (w, id) => w?.tasks.find((t) => t.id === id) || null;
   const event = (w, type, task = null, payload = {}) => {
-    const e = { id: crypto.randomUUID(), workflowId: w.id, taskId: task?.id || null, runId: task?.runId || null,
+    w.eventSeq = (w.eventSeq || 0) + 1;
+    const e = { id: crypto.randomUUID(), seq: w.eventSeq, eventId: `${w.id}:${w.eventSeq}`, workflowId: w.id, taskId: task?.id || null, runId: task?.runId || null,
       agentId: task?.runId || task?.provider || null, provider: task?.provider || null, timestamp: new Date(now()).toISOString(), eventType: type, payload };
     w.events.push(e); if (w.events.length > 500) w.events.shift();
     onEvent(e); persist(); return e;
@@ -143,7 +152,7 @@ export function createWorkflows({ file, maxConcurrent = 2, dispatch = async () =
   function updateWorkflow(w) {
     if (w.tasks.every((t) => TERMINAL.has(t.status))) {
       const previous = w.status;
-      w.status = w.tasks.some((t) => UNSUCCESSFUL.has(t.status)) ? 'failed'
+      w.status = w.tasks.some((t) => UNSUCCESSFUL.has(t.status) && t.status !== 'cancelled') ? 'failed'
         : w.tasks.some((t) => t.status === 'cancelled') ? 'cancelled' : 'completed';
       w.completedAt ||= now();
       if (previous !== w.status) event(w, `workflow.${w.status}`);
@@ -242,7 +251,10 @@ export function createWorkflows({ file, maxConcurrent = 2, dispatch = async () =
     if (!String(name || '').trim() || !Array.isArray(tasks) || !tasks.length || tasks.length > 40) return { ok: false, code: 'invalidWorkflow' };
     const normalized = tasks.map((t, i) => {
       const id = String(t.id || `task-${i + 1}`).slice(0, 80);
-      const provider = t.provider === 'codex' ? 'codex-cli' : String(t.provider || 'claude');
+      let provider = String(t.provider || 'antigravity').toLowerCase();
+      if (provider === 'codex') provider = 'codex-cli';
+      if (provider === 'claude') provider = 'claude-code';
+      if (provider === 'gemini') provider = 'antigravity';
       const expectedArtifacts = t.expectedArtifacts === undefined ? [] : Array.isArray(t.expectedArtifacts) && t.expectedArtifacts.every((x) => typeof x === 'string')
         ? [...new Set(t.expectedArtifacts.map((x) => x.trim()))] : null;
       return { id, title: clip(t.title || `Task ${i + 1}`, 120), description: clip(t.description, 4000), provider, expectedArtifacts,
@@ -255,7 +267,7 @@ export function createWorkflows({ file, maxConcurrent = 2, dispatch = async () =
     const idsFinal = new Set(normalized.map((t) => t.id));
     if (idsFinal.size !== normalized.length || normalized.some((t) => !t.title || !PROVIDERS.has(t.provider) || t.expectedArtifacts === null
       || t.expectedArtifacts.length > 10 || t.expectedArtifacts.some((p) => !p || path.isAbsolute(p) || /[:\0]/.test(p) || p.split(/[\\/]/).some((part) => part === '..' || part === '.git'))
-      || (t.expectedArtifacts.length && t.provider !== 'codex-cli') || t.dependsOn.some((d) => !idsFinal.has(d) || d === t.id))) return { ok: false, code: 'invalidTask' };
+      || t.dependsOn.some((d) => !idsFinal.has(d) || d === t.id))) return { ok: false, code: 'invalidTask' };
     if (cycle(normalized)) return { ok: false, code: 'cycle' };
     const at = now(), w = { id: crypto.randomUUID(), name: clip(name, 120), description: clip(description, 1000), status: 'draft',
       createdAt: at, updatedAt: at, startedAt: null, completedAt: null, tasks: normalized, events: [] };
@@ -346,12 +358,44 @@ export function createWorkflows({ file, maxConcurrent = 2, dispatch = async () =
     if (w.status === 'draft') { w.status = 'cancelled'; w.completedAt = now(); event(w, 'workflow.cancelled'); }
     return { ok: true, workflow: publicWorkflow(w) };
   }
+  function getEventsSince(workflowId, lastEventId) {
+    const w = workflows.get(String(workflowId));
+    if (!w) return null;
+    if (!lastEventId) return w.events.slice();
+    const strId = String(lastEventId);
+    let targetSeq = null;
+    if (strId.includes(':')) {
+      const parts = strId.split(':');
+      const num = Number(parts[parts.length - 1]);
+      if (Number.isInteger(num)) targetSeq = num;
+    } else if (Number.isInteger(Number(strId))) {
+      targetSeq = Number(strId);
+    }
+    if (targetSeq !== null) {
+      return w.events.filter((e) => (e.seq || 0) > targetSeq);
+    }
+    const idx = w.events.findIndex((e) => e.id === strId || e.eventId === strId);
+    if (idx === -1) return w.events.slice();
+    return w.events.slice(idx + 1);
+  }
+
   function load() {
     if (!store) return;
+    let raw = null;
     try {
-      const data = JSON.parse(fs.readFileSync(store, 'utf8'));
+      if (fs.existsSync(store)) raw = fs.readFileSync(store, 'utf8');
+      else if (fs.existsSync(`${store}.bak`)) raw = fs.readFileSync(`${store}.bak`, 'utf8');
+    } catch {
+      try {
+        if (fs.existsSync(`${store}.bak`)) raw = fs.readFileSync(`${store}.bak`, 'utf8');
+      } catch { /* absent */ }
+    }
+    if (!raw) return;
+    try {
+      const data = JSON.parse(raw);
       if (!Array.isArray(data.workflows)) return;
       for (const w of data.workflows.slice(-100)) {
+        w.eventSeq = w.events?.length ? Math.max(...w.events.map((e) => e.seq || 0), 0) : 0;
         for (const t of w.tasks) {
           t.attempts ||= []; t.runs ||= []; t.blockedBy ||= []; t.currentRunId ??= t.runId || null;
           if (lockOwned && CLAIMED.has(t.status)) {
@@ -359,7 +403,8 @@ export function createWorkflows({ file, maxConcurrent = 2, dispatch = async () =
             const a = t.attempts.find((x) => x.dispatchId === t.dispatchId);
             if (a) Object.assign(a, { status: 'interrupted', completedAt: now(), processStatus: 'interrupted', error: t.error });
             t.claimOwner = ''; t.claimPid = null; t.claimedAt = null; t.claimExpiresAt = null;
-            w.events.push({ id: crypto.randomUUID(), workflowId: w.id, taskId: t.id, runId: t.runId || null, agentId: t.provider,
+            w.eventSeq = (w.eventSeq || 0) + 1;
+            w.events.push({ id: crypto.randomUUID(), seq: w.eventSeq, eventId: `${w.id}:${w.eventSeq}`, workflowId: w.id, taskId: t.id, runId: t.runId || null, agentId: t.provider,
               provider: t.provider, timestamp: new Date(now()).toISOString(), eventType: 'task.interrupted', payload: { from: old, reason: t.error } });
           }
         }
@@ -370,11 +415,21 @@ export function createWorkflows({ file, maxConcurrent = 2, dispatch = async () =
         workflows.set(w.id, w);
       }
       if (lockOwned) persist();
-    } catch { /* first run or an incomplete atomic write */ }
+    } catch {
+      if (fs.existsSync(`${store}.bak`)) {
+        try {
+          const bakData = JSON.parse(fs.readFileSync(`${store}.bak`, 'utf8'));
+          if (Array.isArray(bakData.workflows)) {
+            for (const bw of bakData.workflows.slice(-100)) workflows.set(bw.id, bw);
+            if (lockOwned) persist();
+          }
+        } catch { /* backup corrupted too */ }
+      }
+    }
   }
   const schedulerAvailable = acquireLock();
   load();
   return { create, start, get: (id) => publicWorkflow(workflows.get(String(id))), list: () => [...workflows.values()].map(publicWorkflow),
-    events: (id) => workflows.get(String(id))?.events.slice() || null, retry, cancelTask, cancelWorkflow, settle, providerChanged,
+    events: (id) => workflows.get(String(id))?.events.slice() || null, getEventsSince, retry, cancelTask, cancelWorkflow, settle, providerChanged,
     schedule, persist, dispose: releaseLock, maxConcurrent, schedulerAvailable };
 }
