@@ -6,6 +6,26 @@
 
 import { redact } from '../../redact.mjs';
 
+const PERMISSION_ESCALATION_PATTERN = /(?:(?:grant|escalate|override|modify)[\s_]*(?:permission|privilege|policy|scope|role)|dangerouslySkipPermissions)[\s:=]+(?:true|all|\*|admin|root)/gi;
+
+export function sanitizePermissionDirectives(val) {
+  if (typeof val === 'string') {
+    return redact(val).replace(PERMISSION_ESCALATION_PATTERN, '[SECURITY_BLOCKED: PERMISSION_ESCALATION_PROHIBITED]');
+  }
+  if (Array.isArray(val)) {
+    return val.map((x) => sanitizePermissionDirectives(x));
+  }
+  if (val && typeof val === 'object') {
+    const clean = {};
+    for (const [k, v] of Object.entries(val)) {
+      if (PERMISSION_ESCALATION_PATTERN.test(k)) continue;
+      clean[k] = sanitizePermissionDirectives(v);
+    }
+    return clean;
+  }
+  return val;
+}
+
 export function createHandoffEngine() {
   /**
    * Structures the output produced by an upstream subtask.
@@ -31,13 +51,13 @@ export function createHandoffEngine() {
       agentId: agentId || provider,
       executionId,
       timestamp: Date.now(),
-      summary: redact(String(summary || '')).slice(0, 4000),
-      filesChanged: Array.isArray(filesChanged) ? filesChanged.map(String).slice(0, 100) : [],
-      contracts: Array.isArray(contracts) ? contracts.slice(0, 50) : [],
-      decisions: Array.isArray(decisions) ? decisions.map(String).slice(0, 50) : [],
+      summary: sanitizePermissionDirectives(redact(String(summary || ''))).slice(0, 4000),
+      filesChanged: Array.isArray(filesChanged) ? filesChanged.map((f) => redact(String(f))).slice(0, 100) : [],
+      contracts: Array.isArray(contracts) ? sanitizePermissionDirectives(contracts).slice(0, 50) : [],
+      decisions: Array.isArray(decisions) ? decisions.map((d) => sanitizePermissionDirectives(redact(String(d)))).slice(0, 50) : [],
       testResults: testResults ? structuredClone(testResults) : null,
-      outstandingIssues: Array.isArray(outstandingIssues) ? outstandingIssues.map(String).slice(0, 50) : [],
-      outputExcerpt: redact(String(rawOutput || '')).slice(0, 8000),
+      outstandingIssues: Array.isArray(outstandingIssues) ? outstandingIssues.map((i) => sanitizePermissionDirectives(redact(String(i)))).slice(0, 50) : [],
+      outputExcerpt: sanitizePermissionDirectives(redact(String(rawOutput || ''))).slice(0, 8000),
     };
   }
 
@@ -65,6 +85,9 @@ export function createHandoffEngine() {
       }
       if (handoff.filesChanged.length > 0) {
         block += `Files Modified: ${handoff.filesChanged.join(', ')}\n`;
+      }
+      if (handoff.contracts && handoff.contracts.length > 0) {
+        block += `Contracts:\n${handoff.contracts.map((c) => `  - ${typeof c === 'object' ? JSON.stringify(c) : c}`).join('\n')}\n`;
       }
       if (handoff.decisions.length > 0) {
         block += `Decisions:\n${handoff.decisions.map((d) => `  - ${d}`).join('\n')}\n`;

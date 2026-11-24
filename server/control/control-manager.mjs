@@ -22,6 +22,8 @@ export function createControlManager({
   taskAggregator,
   tasksRunner = null,   // Claude tasks manager (server/tasks.mjs)
   codexRuns = null,     // Codex CLI runs manager (server/codex-runs.mjs)
+  antigravityAdapter = null, // Antigravity Adapter (server/orchestration/adapters/antigravity-adapter.mjs)
+  adapterRegistry = null,    // Universal Adapter Registry
   sessionsMap = null,   // Live office sessions map
   storePath = null,
   knownDirs = [],
@@ -139,6 +141,60 @@ export function createControlManager({
       }
       providerResult = r;
       providerRunId = r.id || executionId;
+    } else if (agentId === 'antigravity') {
+      const adapter = antigravityAdapter || (adapterRegistry && adapterRegistry.getAdapter('antigravity'));
+      if (!adapter) {
+        throw new Error('Antigravity adapter is not available on server.');
+      }
+      const runId = `agy_${Date.now()}_${crypto.randomBytes(3).toString('hex')}`;
+      adapter.stream({
+        runId,
+        prompt: trimmedText,
+        cwd: normDir,
+      }, {
+        onComplete: (res) => {
+          const rec = executions.get(executionId);
+          if (rec) {
+            rec.status = 'succeeded';
+            rec.completedAt = Date.now();
+            rec.result = res.structuredOutput || res.stdout;
+            persist();
+          }
+          if (taskAggregator?.ingest) {
+            taskAggregator.ingest({
+              id: `ev-comp-${Date.now()}`,
+              taskId: runId,
+              sess: resolvedSessionId,
+              provider: agentId,
+              type: 'completed',
+              label: 'Antigravity execution completed',
+              ts: Date.now(),
+            });
+          }
+        },
+        onError: (res) => {
+          const rec = executions.get(executionId);
+          if (rec) {
+            rec.status = res.status === 'CANCELLED' ? 'cancelled' : 'failed';
+            rec.completedAt = Date.now();
+            rec.error = res.error || res.stderr;
+            persist();
+          }
+          if (taskAggregator?.ingest) {
+            taskAggregator.ingest({
+              id: `ev-err-${Date.now()}`,
+              taskId: runId,
+              sess: resolvedSessionId,
+              provider: agentId,
+              type: 'error',
+              label: res.error || 'Antigravity execution failed',
+              ts: Date.now(),
+            });
+          }
+        },
+      });
+      providerResult = { ok: true, runId };
+      providerRunId = runId;
     } else {
       throw new Error(`Provider '${agentId}' does not support direct automated task dispatch.`);
     }
@@ -269,6 +325,11 @@ export function createControlManager({
       cancelled = tasksRunner.stop(exec.providerRunId || exec.taskId);
     } else if (agentId === 'codex-cli' && codexRuns) {
       cancelled = codexRuns.stop(exec.providerRunId || exec.taskId);
+    } else if (agentId === 'antigravity') {
+      const adapter = antigravityAdapter || (adapterRegistry && adapterRegistry.getAdapter('antigravity'));
+      if (adapter) {
+        cancelled = adapter.cancel(exec.providerRunId || exec.taskId);
+      }
     }
 
     exec.status = 'cancelled';

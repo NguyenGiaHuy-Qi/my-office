@@ -4,6 +4,8 @@
  * Strictly separates: installed, configured, connected, verified, supported, unsupported, unavailable.
  */
 
+import { resolveProvider } from '../orchestration/discovery/binary-resolver.mjs';
+
 export const CAPABILITY_OPERATIONS = [
   'observe',
   'start',
@@ -112,30 +114,27 @@ export const BASE_PROVIDER_DEFINITIONS = {
   'antigravity': {
     agentId: 'antigravity',
     provider: 'antigravity',
-    displayName: 'Antigravity',
+    displayName: 'Google Antigravity',
     type: 'multimodal_agent',
     protocols: ['skill', 'mcp', 'cli'],
-    description: 'Multimodal AI agent observed via filesystem state and workspace artifacts.',
+    description: 'Autonomous CLI & multimodal AI agent with headless execution and workspace isolation.',
     supportedOperations: {
       observe: true,
-      start: false, // Primary integration is filesystem observer
+      start: true,
       steer: false,
       send_message: false,
-      cancel: false,
+      cancel: true,
       pause: false,
       resume: false,
-      retry: false,
+      retry: true,
       inspect_session: true,
       retrieve_result: true,
     },
     unsupportedReasons: {
-      start: 'Antigravity is currently integrated as an observer of local workspace activity.',
-      steer: 'Observer integration is read-only and does not accept task steering.',
-      send_message: 'Direct messaging not supported across observer boundary.',
-      cancel: 'External observer cannot terminate Antigravity host processes.',
-      pause: 'Observer integration cannot pause Antigravity agent execution.',
+      steer: 'Direct process steering is not supported in non-interactive CLI mode.',
+      send_message: 'Direct messaging not supported across non-interactive CLI boundary.',
+      pause: 'External pause API not exposed by Antigravity CLI.',
       resume: 'Cannot resume paused execution.',
-      retry: 'Task dispatch not supported for observer integration.',
     },
   },
 };
@@ -152,7 +151,23 @@ export function createCapabilityRegistry({
     if (!baseDef) return null;
 
     const adapter = adapters.get(agentId);
-    const detected = adapter?.detectAgent ? adapter.detectAgent({ probe: true }) : { detected: false };
+    let detected = adapter?.detectAgent ? adapter.detectAgent({ probe: true }) : null;
+    if (!detected || (!detected.executable_path && !detected.installed)) {
+      try {
+        const resolved = resolveProvider(agentId);
+        if (resolved && (resolved.status === 'READY' || resolved.status === 'VERSION_VERIFIED' || resolved.binaryPath)) {
+          detected = {
+            detected: true,
+            installed: true,
+            configured: resolved.status === 'READY' || resolved.status === 'VERSION_VERIFIED',
+            executable_path: resolved.binaryPath,
+            version: resolved.version,
+            status: resolved.status === 'READY' ? 'FUNCTIONALLY_VERIFIED' : 'DETECTED',
+          };
+        }
+      } catch {}
+    }
+    if (!detected) detected = { detected: false };
     const saved = integrationState?.get ? integrationState.get(agentId, detected) : { connected: false };
 
     const installed = Boolean(saved.installed || detected.executable_path || detected.installed);

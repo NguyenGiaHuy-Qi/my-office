@@ -66,6 +66,8 @@ import { createCapabilityMatcher } from './orchestration/capability-matcher.mjs'
 import { createAgentSelector } from './orchestration/agent-selector.mjs';
 import { createPlanGenerator } from './orchestration/plan-generator.mjs';
 import { handleOrchestrationRoutes } from './orchestration/orchestration-api.mjs';
+import { createAdapterRegistry } from './orchestration/adapters/index.mjs';
+import { UniversalWorktreeManager } from './orchestration/workspace/worktree-manager.mjs';
 import { createCapabilityRegistry } from './control/capability-registry.mjs';
 import { createControlManager } from './control/control-manager.mjs';
 import { handleControlRoutes } from './control/control-api.mjs';
@@ -2704,7 +2706,12 @@ function codexRunUpdate(r, event = null) {
     agentModel.ingest(e); pushFeed(e); broadcast({ k: 'ev', e, s: pub(s), stats });
   } else broadcast({ k: 'sess', s: pub(s) });
 }
+const universalAdapterRegistry = createAdapterRegistry();
 const workflowWorktrees = createWorktreeManager({ root: path.join(DATA_DIR, 'worktrees') });
+const universalWorktreeManager = new UniversalWorktreeManager({
+  baseWorktreeDir: path.join(DATA_DIR, 'worktrees'),
+  repoRoot: path.resolve('.'),
+});
 const codexRuns = createCodexRuns({ bin: findCodex(), dataDir: DATA_DIR, worktrees: workflowWorktrees,
   onChange: (r) => workflowEngine?.providerChanged(r), onEvent: (r, e) => codexRunUpdate(r, e) });
 function workflowSeedArtifacts(w, task) {
@@ -2730,6 +2737,51 @@ workflowEngine = createWorkflows({ file: path.join(DATA_DIR, 'workflows.json'), 
         workflowId: w.id, taskId: task.id, dispatchId: task.dispatchId });
       return result.ok ? { ok: true, runId: result.run.id, worktreePath: result.run.worktreePath, repoRoot: result.run.repoRoot, branch: result.run.branch } : result;
     }
+    if (task.provider === 'antigravity') {
+      const wt = await workflowWorktrees.create(task.workingDirectory, `${w.id}:${task.id}`);
+      const inputs = workflowSeedArtifacts(w, task);
+      try { if (inputs.length) await workflowWorktrees.seed(wt.worktreePath, wt.workingDirectory, inputs); }
+      catch (error) { workflowWorktrees.release(wt.worktreePath, wt.owner); throw error; }
+      const adapter = universalAdapterRegistry.getAdapter('antigravity');
+      const runId = `agy_wf_${Date.now()}_${crypto.randomBytes(3).toString('hex')}`;
+      claudeWorkflowWorktrees.set(runId, wt);
+      adapter?.stream({
+        runId,
+        prompt,
+        cwd: wt.workingDirectory,
+        timeoutMs: task.timeout,
+      }, {
+        onEvent: (evt) => {
+          workflowEngine?.emit({ type: 'task_event', workflowId: w.id, taskId: task.id, event: evt });
+        },
+        onComplete: (res) => {
+          claudeWorkflowWorktrees.delete(runId);
+          workflowWorktrees.release(wt.worktreePath, wt.owner);
+          workflowEngine?.providerChanged({
+            id: runId,
+            workflowId: w.id,
+            taskId: task.id,
+            dispatchId: task.dispatchId,
+            status: 'completed',
+            result: typeof res.structuredOutput === 'string' ? res.structuredOutput : JSON.stringify(res.structuredOutput || res.stdout || ''),
+          });
+        },
+        onError: (res) => {
+          claudeWorkflowWorktrees.delete(runId);
+          workflowWorktrees.release(wt.worktreePath, wt.owner);
+          const st = res.status === 'CANCELLED' ? 'cancelled' : res.status === 'TIMEOUT' ? 'timeout' : 'failed';
+          workflowEngine?.providerChanged({
+            id: runId,
+            workflowId: w.id,
+            taskId: task.id,
+            dispatchId: task.dispatchId,
+            status: st,
+            error: res.error || res.stderr || 'Antigravity execution failed',
+          });
+        },
+      });
+      return { ok: true, runId, worktreePath: wt.worktreePath, repoRoot: wt.repoRoot, branch: wt.branch };
+    }
     const wt = await workflowWorktrees.create(task.workingDirectory, `${w.id}:${task.id}`);
     const inputs = workflowSeedArtifacts(w, task);
     try { if (inputs.length) await workflowWorktrees.seed(wt.worktreePath, wt.workingDirectory, inputs); }
@@ -2740,7 +2792,11 @@ workflowEngine = createWorkflows({ file: path.join(DATA_DIR, 'workflows.json'), 
     claudeWorkflowWorktrees.set(result.task.id, wt);
     return { ok: true, runId: result.task.id, worktreePath: wt.worktreePath, repoRoot: wt.repoRoot, branch: wt.branch };
   },
-  cancel: (provider, runId) => provider === 'codex-cli' ? codexRuns.stop(runId) : tasks.stop(runId),
+  cancel: (provider, runId) => {
+    if (provider === 'codex-cli') return codexRuns.stop(runId);
+    if (provider === 'antigravity') return universalAdapterRegistry.getAdapter('antigravity')?.cancel(runId);
+    return tasks.stop(runId);
+  },
   onEvent: (e) => broadcast({ k: 'workflow', e }),
 });
 const toolPermissionRegistry = createPermissionRegistry({
@@ -2801,6 +2857,8 @@ const controlManager = createControlManager({
   taskAggregator,
   tasksRunner: tasks,
   codexRuns,
+  antigravityAdapter: universalAdapterRegistry.getAdapter('antigravity'),
+  adapterRegistry: universalAdapterRegistry,
   sessionsMap: sessions,
   storePath: path.join(DATA_DIR, 'control', 'control-state.json'),
   knownDirs,
@@ -3543,7 +3601,13 @@ const server = http.createServer((req, res) => {
     if (!task) { json(res, 404, { ok: false, code: 'notFound' }); return; }
     if (action === 'retry') { const result = workflowEngine.retry(workflowId, taskId); json(res, result.ok ? 200 : 409, result); return; }
     if (action === 'cancel') { const result = workflowEngine.cancelTask(workflowId, taskId); json(res, result.ok ? 200 : 409, result); return; }
-    if (action === 'logs') { const run = task.provider === 'codex-cli' ? codexRuns.get(task.runId) : null; json(res, 200, { ok: true, output: run?.output || '', stderr: run?.stderr || '', events: workflowEngine.events(workflowId)?.filter((e) => e.taskId === taskId) || [], result: task.result || '' }); return; }
+    if (action === 'logs') {
+      const run = task.provider === 'codex-cli' ? codexRuns.get(task.runId)
+        : task.provider === 'antigravity' ? universalAdapterRegistry.getAdapter('antigravity')?.getStatus(task.runId)
+        : null;
+      json(res, 200, { ok: true, output: run?.output || run?.stdout || '', stderr: run?.stderr || '', events: workflowEngine.events(workflowId)?.filter((e) => e.taskId === taskId) || [], result: task.result || '' });
+      return;
+    }
     const cleanup = task.provider === 'codex-cli' && task.runId ? codexRuns.cleanup(task.runId)
       : workflowWorktrees.cleanup({ repoRoot: task.repoRoot, worktreePath: task.worktreePath });
     cleanup.then((result) => {
