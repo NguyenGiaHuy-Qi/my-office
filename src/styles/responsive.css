@@ -21,7 +21,7 @@
 @media (max-width: 1440px) {
   #app { grid-template-columns: 300px minmax(0, 1fr) 330px; }
 }
-@media (max-width: 1560px) {
+@media (max-width: 1200px) {
   .tb-btn .lbl { display: none; }
 }
 @media (max-width: 1100px) {
@@ -45,7 +45,7 @@
   #stage { bottom: calc(132px + env(safe-area-inset-bottom, 0px)); }
   .toolbar { bottom: calc(144px + env(safe-area-inset-bottom, 0px)); padding: 6px; gap: 6px; }
   .tb-zoom { display: none; }
-  .drawer, .drawer--wide { top: 7%; width: 100%; border-left: none; border-top: 1px solid var(--line-2); border-radius: 18px 18px 0 0; animation: sheet-in .25s ease-out; padding-bottom: env(safe-area-inset-bottom, 0px); }
+  .drawer, .drawer--wide, .drawer--workbench { top: 7%; width: 100%; border-left: none; border-top: 1px solid var(--line-2); border-radius: 18px 18px 0 0; animation: sheet-in .25s ease-out; padding-bottom: env(safe-area-inset-bottom, 0px); }
   @keyframes sheet-in { from { transform: translateY(24px); opacity: 0; } }
   .meters { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .toast { bottom: calc(196px + env(safe-area-inset-bottom, 0px)); }

@@ -20,7 +20,6 @@ async function run() {
   });
 
   const chunkStatuses = [];
-  let sseConnected = false;
   let sseStatus = null;
   const pageErrors = [];
 
@@ -31,7 +30,6 @@ async function run() {
     }
     if (url.includes('/stream')) {
       sseStatus = res.status();
-      sseConnected = true;
     }
   });
 
@@ -79,13 +77,13 @@ async function run() {
 
   // Expand history date groups if needed
   console.log('5. Ensuring history date groups and target timeline are expanded...');
-  await page.evaluate((targetFile) => {
+  await page.evaluate(() => {
     // Expand date buttons
     const dateBtns = document.querySelectorAll('.act-date-btn');
     dateBtns.forEach(b => {
       if (b.getAttribute('aria-expanded') === 'false') b.click();
     });
-  }, TARGET_FILENAME);
+  });
   await page.waitForTimeout(500);
 
   // Locate the target task card in history

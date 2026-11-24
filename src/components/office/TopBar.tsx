@@ -37,7 +37,7 @@ export default async function TopBar() {
         <button id="btn-replay" className="tb-btn" type="button" aria-pressed="false" title={t('ui.topBar.replayTitle')}><span data-icon="rewind"></span><span className="lbl">{t('ui.topBar.replay')}</span></button>
         <button id="btn-control" className="tb-btn" type="button" aria-pressed="false" title="Agent Control Center"><span data-icon="terminal"></span><span className="lbl">Control</span></button>
         <button id="btn-orch-workspace" className="tb-btn" type="button" aria-pressed="false" title="Multi-Agent Orchestration"><span data-icon="git"></span><span className="lbl">Orchestration</span></button>
-        <button id="btn-autonomous-workspace" className="tb-btn" type="button" aria-pressed="false" title="Autonomous Operations"><span data-icon="gear"></span><span className="lbl">Autonomous</span></button>
+        <button id="btn-autonomous-workspace" className="tb-btn" type="button" aria-pressed="false" title="Autonomous Operations"><span data-icon="shield"></span><span className="lbl">Autonomous</span></button>
         <button id="btn-reliability-workspace" className="tb-btn" type="button" aria-pressed="false" title="Production Reliability &amp; Observability"><span data-icon="activity"></span><span className="lbl">Reliability</span></button>
         <button id="btn-tools" className="tb-btn" type="button" aria-pressed="false" title="AI Tools"><span data-icon="wrench"></span><span className="lbl">AI Tools</span></button>
         <div className="pop-wrap">

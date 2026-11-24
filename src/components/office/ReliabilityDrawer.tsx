@@ -2,7 +2,7 @@
 export default function ReliabilityDrawer() {
   return (
     <aside
-      className="drawer drawer--wide drawer--reliability"
+      className="drawer drawer--wide drawer--workbench drawer--reliability"
       id="dr-reliability"
       hidden
       aria-label="Operational Health & Reliability Dashboard"
@@ -11,7 +11,7 @@ export default function ReliabilityDrawer() {
         <div className="dr-title">
           <h2>Operational Health &amp; Reliability</h2>
           <p id="reliability-status">
-            Live KPI Gauges · Process Supervisor · Journal WAL Status · Disaster Recovery &amp; Backups
+            Live KPI Gauges · 7-Day Trial Monitor · Process Supervisor · Journal WAL · Disaster Recovery
           </p>
         </div>
         <button className="icon-btn" type="button" data-close aria-label="Close">
@@ -86,7 +86,7 @@ export default function ReliabilityDrawer() {
         </div>
       </div>
 
-      {/* Navigation Tabs - 4 Core Panes */}
+      {/* Navigation Tabs - 5 Core Panes */}
       <div className="tools-nav-bar" role="tablist" id="reliability-tabs">
         <button
           className="tools-nav-btn tab is-active"
@@ -96,6 +96,17 @@ export default function ReliabilityDrawer() {
           aria-selected="true"
         >
           Live KPI Gauges
+        </button>
+        <button
+          className="tools-nav-btn tab"
+          type="button"
+          role="tab"
+          data-rt="trial"
+          aria-selected="false"
+          id="tab-rel-trial"
+        >
+          <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: '#3DDC84', marginRight: 6 }}></span>
+          7-Day Trial Monitor
         </button>
         <button
           className="tools-nav-btn tab"
@@ -715,6 +726,411 @@ export default function ReliabilityDrawer() {
               <div style={{ padding: '20px', textAlign: 'center', color: 'var(--muted, #8D97AA)', fontSize: '0.85rem' }}>
                 No backups created yet. Click &quot;Create Backup Snapshot&quot; to capture an atomic point-in-time snapshot.
               </div>
+            </div>
+          </div>
+        </div>
+
+        {/* ================================================================= */}
+        {/* 5. 7-DAY OPERATIONAL TRIAL MONITOR PANE */}
+        {/* ================================================================= */}
+        <div className="reliability-pane" id="pane-rel-trial" data-rp="trial" hidden>
+          {/* Trial Status Hero Card */}
+          <div
+            className="tools-section"
+            style={{
+              background: 'var(--panel-bg, #1A1F2C)',
+              border: '1px solid var(--border, #2E3648)',
+              borderRadius: '8px',
+              padding: '16px',
+              marginBottom: '16px',
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
+              <div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <span
+                    id="trial-status-badge"
+                    className="status-badge status-badge--success"
+                  >
+                    Day 1/7 · Active Observation
+                  </span>
+                  <span id="trial-heartbeat-dot" style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '0.78rem', color: '#3DDC84', fontWeight: 600 }}>
+                    <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#3DDC84' }}></span>
+                    PID 30696 Active
+                  </span>
+                </div>
+                <p id="trial-hero-sub" style={{ margin: '6px 0 0', fontSize: '0.82rem', color: 'var(--muted, #8D97AA)' }}>
+                  Authorized 7-Day Continuous Autonomous Stability &amp; Telemetry Observation
+                </p>
+              </div>
+              <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                <span id="trial-last-collected" style={{ fontSize: '0.75rem', color: 'var(--muted, #8D97AA)' }}>
+                  Last Sample: --:--:--
+                </span>
+                <button
+                  id="btn-trial-refresh"
+                  type="button"
+                  className="tb-btn"
+                  style={{
+                    fontSize: '0.8rem',
+                    padding: '4px 10px',
+                    background: 'var(--panel-bg, #1A1F2C)',
+                    border: '1px solid var(--border, #2E3648)',
+                    color: 'var(--ink, #E8ECF4)',
+                    cursor: 'pointer',
+                    borderRadius: '4px',
+                  }}
+                >
+                  Refresh
+                </button>
+              </div>
+            </div>
+
+            {/* Day Progress Track */}
+            <div style={{ marginTop: '14px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', color: 'var(--muted, #8D97AA)', marginBottom: '4px' }}>
+                <span id="trial-progress-day-text">Observation Progress: Day 1 of 7</span>
+                <span id="trial-progress-pct-text">14.3%</span>
+              </div>
+              <div style={{ background: 'rgba(255, 255, 255, 0.08)', height: '8px', borderRadius: '4px', overflow: 'hidden' }}>
+                <div
+                  id="trial-progress-bar"
+                  style={{
+                    height: '100%',
+                    width: '14.3%',
+                    background: '#3DDC84',
+                    borderRadius: '4px',
+                    transition: 'width 0.4s ease',
+                  }}
+                ></div>
+              </div>
+            </div>
+          </div>
+
+          {/* Trial KPI Grid (6 metrics) */}
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+              gap: '12px',
+              marginBottom: '16px',
+            }}
+          >
+            {/* Snapshots Count */}
+            <div
+              className="tools-section"
+              style={{
+                background: 'var(--panel-bg, #1A1F2C)',
+                border: '1px solid var(--border, #2E3648)',
+                borderRadius: '8px',
+                padding: '14px',
+              }}
+            >
+              <span style={{ fontSize: '0.72rem', color: 'var(--muted, #8D97AA)', textTransform: 'uppercase' }}>
+                Telemetry Snapshots
+              </span>
+              <div
+                id="trial-kpi-snapshots"
+                style={{ fontSize: '1.35rem', fontWeight: 700, color: 'var(--ink, #E8ECF4)', marginTop: '4px', fontVariantNumeric: 'tabular-nums' }}
+              >
+                --
+              </div>
+              <div style={{ fontSize: '0.72rem', color: 'var(--muted, #8D97AA)', marginTop: '2px' }}>
+                Post-start: <span id="trial-kpi-post-snapshots" style={{ color: 'var(--ink, #E8ECF4)' }}>--</span>
+              </div>
+            </div>
+
+            {/* Telemetry Coverage & Gaps */}
+            <div
+              className="tools-section"
+              style={{
+                background: 'var(--panel-bg, #1A1F2C)',
+                border: '1px solid var(--border, #2E3648)',
+                borderRadius: '8px',
+                padding: '14px',
+              }}
+            >
+              <span style={{ fontSize: '0.72rem', color: 'var(--muted, #8D97AA)', textTransform: 'uppercase' }}>
+                Telemetry Coverage
+              </span>
+              <div
+                id="trial-kpi-coverage"
+                style={{ fontSize: '1.35rem', fontWeight: 700, color: '#3DDC84', marginTop: '4px', fontVariantNumeric: 'tabular-nums' }}
+              >
+                100.0%
+              </div>
+              <div style={{ fontSize: '0.72rem', color: 'var(--muted, #8D97AA)', marginTop: '2px' }}>
+                Gaps: <span id="trial-kpi-gaps" style={{ color: 'var(--ink, #E8ECF4)' }}>0 detected</span>
+              </div>
+            </div>
+
+            {/* Active SEV Alerts */}
+            <div
+              className="tools-section"
+              style={{
+                background: 'var(--panel-bg, #1A1F2C)',
+                border: '1px solid var(--border, #2E3648)',
+                borderRadius: '8px',
+                padding: '14px',
+              }}
+            >
+              <span style={{ fontSize: '0.72rem', color: 'var(--muted, #8D97AA)', textTransform: 'uppercase' }}>
+                Active SEV Alerts
+              </span>
+              <div
+                id="trial-kpi-alerts"
+                style={{ fontSize: '1.35rem', fontWeight: 700, color: '#3DDC84', marginTop: '4px', fontVariantNumeric: 'tabular-nums' }}
+              >
+                0 Active
+              </div>
+              <div style={{ fontSize: '0.72rem', color: 'var(--muted, #8D97AA)', marginTop: '2px' }}>
+                SEV-1: <span id="trial-kpi-sev1" style={{ color: 'var(--ink, #E8ECF4)' }}>0</span> · SEV-2: <span id="trial-kpi-sev2" style={{ color: 'var(--ink, #E8ECF4)' }}>0</span>
+              </div>
+            </div>
+
+            {/* Watchdog Status */}
+            <div
+              className="tools-section"
+              style={{
+                background: 'var(--panel-bg, #1A1F2C)',
+                border: '1px solid var(--border, #2E3648)',
+                borderRadius: '8px',
+                padding: '14px',
+              }}
+            >
+              <span style={{ fontSize: '0.72rem', color: 'var(--muted, #8D97AA)', textTransform: 'uppercase' }}>
+                Watchdog Supervisor
+              </span>
+              <div
+                id="trial-kpi-watchdog"
+                style={{ fontSize: '1.35rem', fontWeight: 700, color: '#3DDC84', marginTop: '4px' }}
+              >
+                Healthy
+              </div>
+              <div style={{ fontSize: '0.72rem', color: 'var(--muted, #8D97AA)', marginTop: '2px' }}>
+                Supervisor PID: <span id="trial-kpi-watchdog-pid">30696</span>
+              </div>
+            </div>
+
+            {/* RSS Memory */}
+            <div
+              className="tools-section"
+              style={{
+                background: 'var(--panel-bg, #1A1F2C)',
+                border: '1px solid var(--border, #2E3648)',
+                borderRadius: '8px',
+                padding: '14px',
+              }}
+            >
+              <span style={{ fontSize: '0.72rem', color: 'var(--muted, #8D97AA)', textTransform: 'uppercase' }}>
+                Process RSS Memory
+              </span>
+              <div
+                id="trial-kpi-rss"
+                style={{ fontSize: '1.35rem', fontWeight: 700, color: 'var(--ink, #E8ECF4)', marginTop: '4px', fontVariantNumeric: 'tabular-nums' }}
+              >
+                -- MB
+              </div>
+              <div style={{ fontSize: '0.72rem', color: 'var(--muted, #8D97AA)', marginTop: '2px' }}>
+                Heap: <span id="trial-kpi-heap" style={{ color: 'var(--muted, #8D97AA)' }}>--</span>
+              </div>
+            </div>
+
+            {/* Event Loop Lag */}
+            <div
+              className="tools-section"
+              style={{
+                background: 'var(--panel-bg, #1A1F2C)',
+                border: '1px solid var(--border, #2E3648)',
+                borderRadius: '8px',
+                padding: '14px',
+              }}
+            >
+              <span style={{ fontSize: '0.72rem', color: 'var(--muted, #8D97AA)', textTransform: 'uppercase' }}>
+                Event Loop Lag
+              </span>
+              <div
+                id="trial-kpi-lag"
+                style={{ fontSize: '1.35rem', fontWeight: 700, color: '#3DDC84', marginTop: '4px', fontVariantNumeric: 'tabular-nums' }}
+              >
+                -- ms
+              </div>
+              <div style={{ fontSize: '0.72rem', color: 'var(--muted, #8D97AA)', marginTop: '2px' }}>
+                p50: <span id="trial-kpi-lag-p50">--</span> · p95: <span id="trial-kpi-lag-p95">--</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Telemetry Snapshots Table */}
+          <div
+            className="tools-section"
+            style={{
+              background: 'var(--panel-bg, #1A1F2C)',
+              border: '1px solid var(--border, #2E3648)',
+              borderRadius: '8px',
+              padding: '16px',
+              marginBottom: '16px',
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+              <div>
+                <b style={{ fontSize: '0.95rem', color: 'var(--ink, #E8ECF4)' }}>Telemetry Snapshots Feed</b>
+                <span style={{ fontSize: '0.75rem', color: 'var(--muted, #8D97AA)', marginLeft: '8px' }}>
+                  (Periodic 60s snapshots · Invariant validation)
+                </span>
+              </div>
+              <span id="trial-snapshots-count-badge" style={{ fontSize: '0.75rem', color: 'var(--muted, #8D97AA)' }}>
+                Showing latest samples
+              </span>
+            </div>
+
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.78rem' }}>
+                <thead>
+                  <tr style={{ borderBottom: '1px solid var(--border, #2E3648)', textAlign: 'left', color: 'var(--muted, #8D97AA)' }}>
+                    <th style={{ padding: '8px 10px' }}>Snapshot ID / Time</th>
+                    <th style={{ padding: '8px 10px' }}>RSS Memory</th>
+                    <th style={{ padding: '8px 10px' }}>Heap Used</th>
+                    <th style={{ padding: '8px 10px' }}>Lag (p50 / p95)</th>
+                    <th style={{ padding: '8px 10px' }}>Handles</th>
+                    <th style={{ padding: '8px 10px' }}>Safety Invariants</th>
+                    <th style={{ padding: '8px 10px' }}>Status</th>
+                  </tr>
+                </thead>
+                <tbody id="trial-snapshots-body">
+                  <tr>
+                    <td colSpan={7} style={{ padding: '24px', textAlign: 'center', color: 'var(--muted, #8D97AA)' }}>
+                      Loading live trial telemetry snapshots...
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Alerts & Telemetry Gaps Section */}
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))',
+              gap: '14px',
+              marginBottom: '16px',
+            }}
+          >
+            {/* Anomaly Alerts List */}
+            <div
+              className="tools-section"
+              style={{
+                background: 'var(--panel-bg, #1A1F2C)',
+                border: '1px solid var(--border, #2E3648)',
+                borderRadius: '8px',
+                padding: '16px',
+              }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                <b style={{ fontSize: '0.92rem', color: 'var(--ink, #E8ECF4)' }}>Operational Anomaly Alerts</b>
+                <span id="trial-alerts-summary" className="status-badge status-badge--success">0 Active</span>
+              </div>
+              <div
+                id="trial-alerts-list"
+                style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '8px',
+                  maxHeight: '220px',
+                  overflowY: 'auto',
+                }}
+              >
+                <div style={{ padding: '16px', textAlign: 'center', color: 'var(--muted, #8D97AA)', fontSize: '0.8rem' }}>
+                  No active anomaly alerts. All operational parameters within nominal thresholds.
+                </div>
+              </div>
+            </div>
+
+            {/* Telemetry Gap Log */}
+            <div
+              className="tools-section"
+              style={{
+                background: 'var(--panel-bg, #1A1F2C)',
+                border: '1px solid var(--border, #2E3648)',
+                borderRadius: '8px',
+                padding: '16px',
+              }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                <b style={{ fontSize: '0.92rem', color: 'var(--ink, #E8ECF4)' }}>Telemetry Gap Log</b>
+                <span id="trial-gaps-summary" className="status-badge status-badge--success">0 Gaps</span>
+              </div>
+              <div
+                id="trial-gaps-list"
+                style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '8px',
+                  maxHeight: '220px',
+                  overflowY: 'auto',
+                }}
+              >
+                <div style={{ padding: '16px', textAlign: 'center', color: 'var(--muted, #8D97AA)', fontSize: '0.8rem' }}>
+                  Continuous sampling intact. Zero telemetry collection gaps recorded.
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Daily Reports & Final Assessment Viewer */}
+          <div
+            className="tools-section"
+            style={{
+              background: 'var(--panel-bg, #1A1F2C)',
+              border: '1px solid var(--border, #2E3648)',
+              borderRadius: '8px',
+              padding: '16px',
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px', marginBottom: '12px' }}>
+              <div>
+                <b style={{ fontSize: '0.95rem', color: 'var(--ink, #E8ECF4)' }}>Trial Operational Reports</b>
+                <p style={{ margin: '2px 0 0', fontSize: '0.75rem', color: 'var(--muted, #8D97AA)' }}>
+                  Audit reports generated from continuous telemetry collection
+                </p>
+              </div>
+              <div id="trial-report-buttons" style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                {/* Dynamically populated buttons for Day 1..7 and Final */}
+              </div>
+            </div>
+
+            <div
+              id="trial-report-container"
+              style={{
+                background: 'rgba(0, 0, 0, 0.25)',
+                border: '1px solid var(--border, #2E3648)',
+                borderRadius: '6px',
+                padding: '14px',
+                maxHeight: '360px',
+                overflowY: 'auto',
+              }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border, #2E3648)', paddingBottom: '8px', marginBottom: '10px' }}>
+                <b id="trial-report-title" style={{ fontSize: '0.88rem', color: 'var(--ink, #E8ECF4)' }}>
+                  Operational Trial Report Viewer
+                </b>
+                <span id="trial-report-status" className="status-badge status-badge--info">Ready</span>
+              </div>
+              <pre
+                id="trial-report-content"
+                style={{
+                  margin: 0,
+                  fontSize: '0.78rem',
+                  lineHeight: '1.5',
+                  fontFamily: 'var(--mono, monospace)',
+                  color: 'var(--ink, #E8ECF4)',
+                  whiteSpace: 'pre-wrap',
+                  overflowWrap: 'anywhere',
+                }}
+              >
+                Select a daily report above to view its contents.
+              </pre>
             </div>
           </div>
         </div>

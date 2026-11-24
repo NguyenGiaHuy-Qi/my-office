@@ -1,7 +1,7 @@
 // Static markup for My Office Multi-Agent Orchestration Workspace Drawer
 export default function OrchestrationDrawer() {
   return (
-    <aside className="drawer drawer--wide drawer--orchestration" id="dr-orchestration" hidden aria-label="Multi-Agent Task Orchestration">
+    <aside className="drawer drawer--wide drawer--workbench drawer--orchestration" id="dr-orchestration" hidden aria-label="Multi-Agent Task Orchestration">
       <header className="dr-head">
         <div className="dr-title">
           <h2>Task Orchestration Engine</h2>

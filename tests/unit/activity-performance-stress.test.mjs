@@ -33,7 +33,6 @@ test('Phase 5 — Performance & Stress: 1,500+ events, 20+ concurrent tasks, ded
     for (let e = 1; e < EVENTS_PER_TASK; e++) {
       const isEdit = e % 3 === 0;
       const isCmd = e % 3 === 1;
-      const isRead = e % 3 === 2;
 
       allEvents.push({
         id: eventSeq++,

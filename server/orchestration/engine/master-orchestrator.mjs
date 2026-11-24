@@ -297,49 +297,66 @@ export function createMasterOrchestrator({
   /**
    * Waits for underlying execution to reach terminal state.
    */
-  async function awaitExecutionCompletion(masterTask, subtask, executionId) {
+  function awaitExecutionCompletion(masterTask, subtask, executionId) {
     const checkInterval = 250;
     const maxWaitMs = 120_000;
     const startTime = now();
 
-    const interval = setInterval(() => {
-      const exec = controlManager.getExecution(executionId);
-      const isTerminal = exec && ['succeeded', 'failed', 'cancelled'].includes(exec.status);
-      const isTimedOut = now() - startTime > maxWaitMs;
+    return new Promise((resolve) => {
+      const interval = setInterval(() => {
+        try {
+          const exec = controlManager.getExecution(executionId);
+          const isTerminal = exec && ['succeeded', 'failed', 'cancelled'].includes(exec.status);
+          const isTimedOut = now() - startTime > maxWaitMs;
 
-      if (isTerminal || isTimedOut) {
-        clearInterval(interval);
-        subtask.completedAt = now();
+          if (isTerminal || isTimedOut) {
+            clearInterval(interval);
+            subtask.completedAt = now();
 
-        if (exec?.status === 'succeeded' || (exec?.status === 'running' && isTimedOut)) {
-          subtask.status = 'succeeded';
-          subtask.result = exec?.result || `Completed successfully by ${subtask.assignedProvider}`;
+            if (isTimedOut) {
+              subtask.status = 'failed';
+              subtask.error = `Execution timed out after ${maxWaitMs}ms`;
+            } else if (exec?.status === 'succeeded') {
+              subtask.status = 'succeeded';
+              subtask.result = exec?.result || `Completed successfully by ${subtask.assignedProvider}`;
 
-          // Create structured handoff record
-          const handoff = handoffEngine.createHandoffRecord({
-            subtaskId: subtask.subtaskId,
-            masterTaskId: masterTask.masterTaskId,
-            provider: subtask.assignedProvider,
-            agentId: subtask.assignedAgent,
-            executionId,
-            summary: subtask.result,
-            filesChanged: exec?.liveTask?.filesChanged?.map((f) => f.path || f) || [],
-            decisions: [`Executed via provider ${subtask.assignedProvider}`],
-            rawOutput: exec?.result || '',
-          });
+              // Create structured handoff record
+              const handoff = handoffEngine.createHandoffRecord({
+                subtaskId: subtask.subtaskId,
+                masterTaskId: masterTask.masterTaskId,
+                provider: subtask.assignedProvider,
+                agentId: subtask.assignedAgent,
+                executionId,
+                summary: subtask.result,
+                filesChanged: exec?.liveTask?.filesChanged?.map((f) => f.path || f) || [],
+                decisions: [`Executed via provider ${subtask.assignedProvider}`],
+                rawOutput: exec?.result || '',
+              });
 
-          handoffs.set(`${masterTask.masterTaskId}:${subtask.subtaskId}`, handoff);
-        } else {
-          subtask.status = exec?.status === 'cancelled' ? 'cancelled' : 'failed';
-          subtask.error = exec?.error || (isTimedOut ? 'Execution timed out' : 'Execution failed');
+              handoffs.set(`${masterTask.masterTaskId}:${subtask.subtaskId}`, handoff);
+            } else {
+              subtask.status = exec?.status === 'cancelled' ? 'cancelled' : 'failed';
+              subtask.error = exec?.error || 'Execution failed';
+            }
+
+            updateMasterTaskState(masterTask);
+            persist();
+            triggerScheduler();
+            resolve(subtask);
+          }
+        } catch (err) {
+          clearInterval(interval);
+          subtask.completedAt = now();
+          subtask.status = 'failed';
+          subtask.error = err.message;
+          updateMasterTaskState(masterTask);
+          persist();
+          triggerScheduler();
+          resolve(subtask);
         }
-
-        updateMasterTaskState(masterTask);
-        persist();
-        triggerScheduler();
-      }
-    }, checkInterval);
-    interval.unref?.();
+      }, checkInterval);
+      interval.unref?.();
+    });
   }
 
   /**

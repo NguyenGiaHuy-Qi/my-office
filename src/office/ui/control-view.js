@@ -1,6 +1,7 @@
 // Client controller for My Office Agent Control Center.
 // Connects UI controls to /api/control/* backend and integrates with Activity Center timeline.
 import { TOKEN } from '../net/live.js';
+import { toast } from './activity.js';
 
 let drawer = null;
 let currentTab = 'agents';
@@ -289,13 +290,13 @@ function renderSessions() {
           });
           const data = await res.json();
           if (data.ok) {
-            alert('Follow-up instruction successfully dispatched.');
+            toast('Follow-up instruction successfully dispatched.');
             loadSessions();
           } else {
-            alert(`Failed to steer session: ${data.error || 'Unknown error'}`);
+            toast(`Failed to steer session: ${data.error || 'Unknown error'}`);
           }
         } catch (err) {
-          alert(`Error: ${err.message}`);
+          toast(`Error: ${err.message}`);
         }
       }
     });
@@ -472,12 +473,13 @@ function renderExecutions() {
           });
           const data = await res.json();
           if (data.ok) {
+            toast('Execution cancelled.');
             loadExecutions();
           } else {
-            alert(`Cancel failed: ${data.error || 'Unknown error'}`);
+            toast(`Cancel failed: ${data.error || 'Unknown error'}`);
           }
         } catch (err) {
-          alert(`Error: ${err.message}`);
+          toast(`Error: ${err.message}`);
         }
       }
     });
@@ -496,12 +498,13 @@ function renderExecutions() {
           });
           const data = await res.json();
           if (data.ok) {
+            toast('Retry initiated successfully.');
             loadExecutions();
           } else {
-            alert(`Retry failed: ${data.error || 'Unknown error'}`);
+            toast(`Retry failed: ${data.error || 'Unknown error'}`);
           }
         } catch (err) {
-          alert(`Error: ${err.message}`);
+          toast(`Error: ${err.message}`);
         }
       }
     });

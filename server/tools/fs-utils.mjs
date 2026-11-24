@@ -84,6 +84,7 @@ export function copyDirectorySync(source, destination) {
 
 /**
  * Atomically writes a JSON payload to disk using a temp file and rename.
+ * Handles Windows EPERM / EEXIST file replacement semantics safely.
  */
 export function atomicWriteJsonSync(filePath, data) {
   const resolved = path.resolve(filePath);
@@ -91,12 +92,20 @@ export function atomicWriteJsonSync(filePath, data) {
   const tempPath = `${resolved}.tmp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   fs.writeFileSync(tempPath, JSON.stringify(data, null, 2), 'utf8');
   try {
+    if (process.platform === 'win32' && fs.existsSync(resolved)) {
+      try { fs.unlinkSync(resolved); } catch {}
+    }
     fs.renameSync(tempPath, resolved);
   } catch (err) {
-    // Windows fallback if target exists and cannot be replaced atomically
-    if (process.platform === 'win32' && err.code === 'EEXIST') {
-      fs.copyFileSync(tempPath, resolved);
-      try { fs.unlinkSync(tempPath); } catch {}
+    // Windows fallback if target exists and cannot be replaced atomically via rename
+    if (process.platform === 'win32' && (err.code === 'EEXIST' || err.code === 'EPERM' || err.code === 'EBUSY')) {
+      try {
+        fs.copyFileSync(tempPath, resolved);
+        try { fs.unlinkSync(tempPath); } catch {}
+      } catch (copyErr) {
+        try { fs.unlinkSync(tempPath); } catch {}
+        throw copyErr;
+      }
     } else {
       try { fs.unlinkSync(tempPath); } catch {}
       throw err;
@@ -105,7 +114,7 @@ export function atomicWriteJsonSync(filePath, data) {
 }
 
 /**
- * Acquires a simple sync lockfile with lease expiry.
+ * Acquires a simple sync lockfile with lease expiry without CPU spin-locking.
  */
 export function acquireLockSync(lockPath, { leaseMs = 10_000 } = {}) {
   const resolved = path.resolve(lockPath);
@@ -113,6 +122,7 @@ export function acquireLockSync(lockPath, { leaseMs = 10_000 } = {}) {
 
   let fd = null;
   const startTime = Date.now();
+  const sleepBuffer = new Int32Array(new SharedArrayBuffer(4));
 
   while (Date.now() - startTime < 3000) {
     try {
@@ -129,9 +139,14 @@ export function acquireLockSync(lockPath, { leaseMs = 10_000 } = {}) {
           }
         } catch {}
       }
-      // brief spin wait
-      const sleepUntil = Date.now() + 25;
-      while (Date.now() < sleepUntil) {}
+      // Non-busy sleep yielding CPU
+      try {
+        Atomics.wait(sleepBuffer, 0, 0, 25);
+      } catch {
+        // Fallback sleep if Atomics is restricted
+        const sleepUntil = Date.now() + 25;
+        while (Date.now() < sleepUntil) {}
+      }
     }
   }
 

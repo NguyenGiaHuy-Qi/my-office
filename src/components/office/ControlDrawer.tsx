@@ -1,7 +1,7 @@
 // Static markup for My Office Agent Control Center Drawer
 export default function ControlDrawer() {
   return (
-    <aside className="drawer drawer--wide drawer--control" id="dr-control" hidden aria-label="Agent Control Center">
+    <aside className="drawer drawer--wide drawer--workbench drawer--control" id="dr-control" hidden aria-label="Agent Control Center">
       <header className="dr-head">
         <div className="dr-title">
           <h2>Agent Control Center</h2>

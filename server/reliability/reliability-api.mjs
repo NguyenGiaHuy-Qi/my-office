@@ -67,6 +67,22 @@ export async function handleReliabilityRoutes(req, res, {
     return true;
   }
 
+  // 2b. GET /api/reliability/metrics - Comprehensive telemetry & reliability metrics
+  if (method === 'GET' && pathname === '/api/reliability/metrics') {
+    if (!metricsCollector) {
+      json(res, 501, { ok: false, error: 'Metrics collector not configured' });
+      return true;
+    }
+    try {
+      const metrics = await metricsCollector.collectMetrics();
+      json(res, 200, { ok: true, metrics });
+      return true;
+    } catch (err) {
+      json(res, 500, { ok: false, error: err.message });
+      return true;
+    }
+  }
+
   // 3. GET /api/reliability/journal - Journal stats and recent WAL records
   if (method === 'GET' && pathname === '/api/reliability/journal') {
     if (!journal) {

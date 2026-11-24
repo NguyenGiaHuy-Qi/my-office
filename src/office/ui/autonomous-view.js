@@ -3,6 +3,7 @@
 // Instantaneous Emergency Stop, and Autonomous Operations Console.
 
 import { TOKEN } from '../net/live.js';
+import { toast } from './activity.js';
 
 let drawer = null;
 let currentTab = 'mode';
@@ -141,7 +142,7 @@ export function setupAutonomousView() {
   document.getElementById('btn-emergency-resume-panel')?.addEventListener('click', () => {
     const confirmBox = document.getElementById('em-resume-confirm');
     if (confirmBox && !confirmBox.checked) {
-      alert('Please check the confirmation box indicating all safety invariants are verified.');
+      toast('Please check the confirmation box indicating all safety invariants are verified.');
       return;
     }
     const select = document.getElementById('em-resume-level-select');
@@ -611,7 +612,7 @@ async function submitIntervention() {
 
   if (!id) return;
   if (!guidance) {
-    alert('Please enter operator guidance instructions before submitting intervention.');
+    toast('Please enter operator guidance instructions before submitting intervention.');
     return;
   }
 
@@ -652,13 +653,14 @@ export async function resolveApproval(approvalId, action, options = {}) {
     }
 
     if (res.ok) {
+      toast(`Approval ${action} applied.`);
       loadApprovals();
       loadAutonomousStatus();
     } else {
-      alert(`Approval error: ${res.data?.error || 'Failed to resolve approval'}`);
+      toast(`Approval error: ${res.data?.error || 'Failed to resolve approval'}`);
     }
   } catch (err) {
-    alert(`Network error resolving approval: ${err.message}`);
+    toast(`Network error resolving approval: ${err.message}`);
   }
 }
 
@@ -719,12 +721,13 @@ export async function triggerEmergencyStop(reason = 'Operator manual halt') {
     });
 
     if (res.ok) {
+      toast('Emergency stop triggered!');
       loadAutonomousStatus();
     } else {
-      alert(`Emergency stop error: ${res.data?.error || 'Failed to trigger emergency stop'}`);
+      toast(`Emergency stop error: ${res.data?.error || 'Failed to trigger emergency stop'}`);
     }
   } catch (err) {
-    alert(`Emergency stop network error: ${err.message}`);
+    toast(`Emergency stop network error: ${err.message}`);
   }
 }
 
@@ -755,12 +758,13 @@ export async function resumeEmergencyStop(resumeLevel = 'supervised', reason = '
     }
 
     if (res.ok) {
+      toast('System resumed safely.');
       loadAutonomousStatus();
     } else {
-      alert(`Emergency resume error: ${res.data?.error || 'Failed to resume system'}`);
+      toast(`Emergency resume error: ${res.data?.error || 'Failed to resume system'}`);
     }
   } catch (err) {
-    alert(`Emergency resume network error: ${err.message}`);
+    toast(`Emergency resume network error: ${err.message}`);
   }
 }
 

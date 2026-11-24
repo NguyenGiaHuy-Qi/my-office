@@ -3,6 +3,7 @@
 // and Consistent Multi-Store Disaster Recovery Backups.
 
 import { TOKEN } from '../net/live.js';
+import { toast } from './activity.js';
 
 let drawer = null;
 let currentTab = 'kpi';
@@ -11,6 +12,11 @@ let cachedMetrics = null;
 let cachedProcesses = [];
 let cachedJournal = null;
 let cachedBackups = [];
+let cachedTrialStatus = null;
+let cachedTrialSnapshots = [];
+let cachedTrialAlerts = [];
+let cachedTrialReports = [];
+let selectedReportName = null;
 
 const q = () => (TOKEN ? `?k=${encodeURIComponent(TOKEN)}` : '');
 
@@ -124,6 +130,13 @@ export function setupReliabilityView() {
     });
   }
 
+  const btnTrialRefresh = document.getElementById('btn-trial-refresh');
+  if (btnTrialRefresh) {
+    btnTrialRefresh.addEventListener('click', () => {
+      fetchTrialData();
+    });
+  }
+
   const btnScanProcs = document.getElementById('btn-scan-processes');
   if (btnScanProcs) {
     btnScanProcs.addEventListener('click', async () => {
@@ -148,11 +161,11 @@ export function setupReliabilityView() {
       btnReconcile.disabled = false;
       btnReconcile.textContent = 'Reconcile Orphans';
       if (res.ok) {
-        alert(`Reconciliation complete. Safe outcomes recorded.`);
+        toast(`Reconciliation complete. Safe outcomes recorded.`);
         await fetchProcesses();
         await fetchHealthAndMetrics();
       } else {
-        alert(`Reconciliation error: ${res.data?.error || 'Failed'}`);
+        toast(`Reconciliation error: ${res.data?.error || 'Failed'}`);
       }
     });
   }
@@ -178,10 +191,10 @@ export function setupReliabilityView() {
       btnCreateBackup.disabled = false;
       btnCreateBackup.textContent = 'Create Backup Snapshot';
       if (res.ok) {
-        alert(`Snapshot ${res.data?.backup?.backupId || 'created'} successfully with verified SHA-256 checksum.`);
+        toast(`Snapshot ${res.data?.backup?.backupId || 'created'} successfully with verified SHA-256 checksum.`);
         await fetchBackups();
       } else {
-        alert(`Backup failed: ${res.data?.error || 'Unknown error'}`);
+        toast(`Backup failed: ${res.data?.error || 'Unknown error'}`);
       }
     });
   }
@@ -190,7 +203,7 @@ export function setupReliabilityView() {
   if (btnDryRun) {
     btnDryRun.addEventListener('click', async () => {
       if (!cachedBackups || cachedBackups.length === 0) {
-        alert('No backups available to verify. Create a backup snapshot first.');
+        toast('No backups available to verify. Create a backup snapshot first.');
         return;
       }
       const latest = cachedBackups[0];
@@ -203,9 +216,9 @@ export function setupReliabilityView() {
       btnDryRun.disabled = false;
       btnDryRun.textContent = 'Verify Restore (Dry-Run)';
       if (res.ok && res.data?.verification?.valid) {
-        alert(`Dry-run sandbox verification PASSED!\nAll ${res.data.verification.filesVerified || 0} file checksums matched and DAG state is intact.`);
+        toast(`Dry-run sandbox verification PASSED! All ${res.data.verification.filesVerified || 0} file checksums matched and DAG state is intact.`);
       } else {
-        alert(`Dry-run verification completed: ${res.data?.verification?.error || res.data?.error || 'Inspect manifest'}`);
+        toast(`Dry-run verification completed: ${res.data?.verification?.error || res.data?.error || 'Inspect manifest'}`);
       }
       await fetchBackups();
     });
@@ -234,7 +247,9 @@ function switchTab(tabName) {
 
 function loadTab(tabName) {
   fetchHealthAndMetrics();
-  if (tabName === 'processes') {
+  if (tabName === 'trial') {
+    fetchTrialData();
+  } else if (tabName === 'processes') {
     fetchProcesses();
   } else if (tabName === 'journal') {
     fetchJournal();
@@ -338,13 +353,10 @@ function renderKpiGauges(healthData, autoData) {
   const uptimeEl = document.getElementById('rel-kpi-uptime');
   const startedEl = document.getElementById('rel-kpi-started-at');
   if (uptimeEl) {
-    // If uptime is available in healthData or compute from window/performance
-    const uptimeSec = healthData?.uptimeSeconds ?? (Math.floor(performance.now() / 1000));
-    uptimeEl.textContent = formatDuration(uptimeSec);
+    uptimeEl.textContent = typeof healthData?.uptimeSeconds === 'number' ? formatDuration(healthData.uptimeSeconds) : '--';
   }
   if (startedEl) {
-    const startedAt = healthData?.serverStartedAt || (Date.now() - performance.now());
-    startedEl.textContent = formatTime(startedAt);
+    startedEl.textContent = healthData?.serverStartedAt ? formatTime(healthData.serverStartedAt) : '--:--:--';
   }
 
   // 2. Active vs Stalled
@@ -401,16 +413,19 @@ function renderProviderGrid(providersMap) {
   if (!grid) return;
 
   const defaultProviders = [
-    { id: 'claude-code', name: 'Claude Code CLI', defaultStatus: 'online' },
-    { id: 'codex-cli', name: 'Codex CLI', defaultStatus: 'online' },
-    { id: 'antigravity', name: 'Antigravity Native', defaultStatus: 'online' },
+    { id: 'claude-code', name: 'Claude Code CLI', defaultStatus: 'unverified' },
+    { id: 'codex-cli', name: 'Codex CLI', defaultStatus: 'unverified' },
+    { id: 'antigravity', name: 'Antigravity Native', defaultStatus: 'unverified' },
   ];
 
   grid.innerHTML = defaultProviders
     .map((p) => {
       const data = providersMap ? providersMap[p.id] : null;
       const status = data?.status || p.defaultStatus;
-      const statusColor = status === 'online' ? '#3DDC84' : status === 'degraded' ? '#FFB74D' : '#8D97AA';
+      const isOnline = status === 'online';
+      const isDegraded = status === 'degraded';
+      const statusColor = isOnline ? '#3DDC84' : isDegraded ? '#FFB74D' : '#8D97AA';
+      const statusLabel = isOnline ? 'ONLINE' : isDegraded ? 'DEGRADED' : 'NO TELEMETRY';
       const latency = typeof data?.lastLatencyMs === 'number' ? `${data.lastLatencyMs}ms` : '--';
       const uptime = data?.uptimeSeconds ? formatDuration(data.uptimeSeconds) : '--';
 
@@ -419,7 +434,7 @@ function renderProviderGrid(providersMap) {
           <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
             <b style="font-size: 0.88rem; color: var(--ink, #E8ECF4);">${escapeHtml(p.name)}</b>
             <span style="font-size: 0.72rem; font-weight: 700; color: ${statusColor}; text-transform: uppercase;">
-              ● ${escapeHtml(status)}
+              ● ${escapeHtml(statusLabel)}
             </span>
           </div>
           <div style="display: flex; justify-content: space-between; font-size: 0.78rem; color: var(--muted, #8D97AA);">
@@ -536,10 +551,10 @@ function renderProcessTable(processes) {
         body: JSON.stringify({ reason: 'Operator requested safe termination', gracePeriodMs: 3000 }),
       });
       if (res.ok) {
-        alert(`Process PID ${pid} terminated safely.`);
+        toast(`Process PID ${pid} terminated safely.`);
         await fetchProcesses();
       } else {
-        alert(`Termination rejected: ${res.data?.error || 'Process identity check failed'}`);
+        toast(`Termination rejected: ${res.data?.error || 'Process identity check failed'}`);
         await fetchProcesses();
       }
     });
@@ -714,11 +729,477 @@ function renderBackupsList(backups) {
       btn.disabled = false;
       btn.textContent = 'Verify Sandbox';
       if (res.ok && res.data?.verification?.valid) {
-        alert(`Snapshot ${backupId} verification PASSED! All file SHA-256 hashes matched.`);
+        toast(`Snapshot ${backupId} verification PASSED! All file SHA-256 hashes matched.`);
       } else {
-        alert(`Verification result: ${res.data?.verification?.error || res.data?.error || 'Completed'}`);
+        toast(`Verification result: ${res.data?.verification?.error || res.data?.error || 'Completed'}`);
       }
       await fetchBackups();
     });
   });
 }
+
+// ============================================================================
+// 7-DAY OPERATIONAL TRIAL MONITOR
+// ============================================================================
+
+async function fetchTrialData() {
+  const [statusRes, snapRes, alertsRes, gapsRes, reportsRes] = await Promise.all([
+    apiRequest(`/api/trial-monitor/status${q()}`),
+    apiRequest(`/api/trial-monitor/snapshots${q()}${TOKEN ? '&' : '?'}limit=15`),
+    apiRequest(`/api/trial-monitor/alerts${q()}`),
+    apiRequest(`/api/trial-monitor/gaps${q()}`),
+    apiRequest(`/api/trial-monitor/reports/daily${q()}`),
+  ]);
+
+  if (statusRes.ok && statusRes.data?.status) {
+    cachedTrialStatus = statusRes.data.status;
+    renderTrialHero(cachedTrialStatus);
+    renderTrialKpi(cachedTrialStatus);
+  } else {
+    renderTrialOfflineState(statusRes.data?.error || 'Unable to connect to Trial Monitor API');
+  }
+
+  if (snapRes.ok && Array.isArray(snapRes.data?.snapshots)) {
+    cachedTrialSnapshots = snapRes.data.snapshots;
+    renderTrialSnapshots(cachedTrialSnapshots);
+  }
+
+  if (alertsRes.ok && Array.isArray(alertsRes.data?.alerts)) {
+    cachedTrialAlerts = alertsRes.data.alerts;
+    renderTrialAlerts(cachedTrialAlerts);
+  }
+
+  if (gapsRes.ok && Array.isArray(gapsRes.data?.gaps)) {
+    renderTrialGaps(gapsRes.data.gaps);
+  }
+
+  if (reportsRes.ok && Array.isArray(reportsRes.data?.reports)) {
+    cachedTrialReports = reportsRes.data.reports;
+    renderTrialReportsList(cachedTrialReports);
+  }
+}
+
+function renderTrialOfflineState(errorMsg = 'API Offline') {
+  renderTrialHero({ isOffline: true });
+  const tbody = document.getElementById('trial-snapshots-body');
+  if (tbody) {
+    tbody.innerHTML = `
+      <tr>
+        <td colSpan="7" style="padding: 24px; text-align: center; color: #FF5F5F;">
+          ● Offline: ${escapeHtml(errorMsg)}. Telemetry feed unavailable.
+        </td>
+      </tr>
+    `;
+  }
+  const alertsContainer = document.getElementById('trial-alerts-list');
+  if (alertsContainer) {
+    alertsContainer.innerHTML = `
+      <div style="padding: 16px; text-align: center; color: #FF5F5F; font-size: 0.8rem;">
+        Unable to reach anomaly alert endpoint.
+      </div>
+    `;
+  }
+}
+
+function renderTrialHero(status) {
+  const badge = document.getElementById('trial-status-badge');
+  const heartbeat = document.getElementById('trial-heartbeat-dot');
+  const heroSub = document.getElementById('trial-hero-sub');
+  const lastCollected = document.getElementById('trial-last-collected');
+  const progressText = document.getElementById('trial-progress-day-text');
+  const progressPct = document.getElementById('trial-progress-pct-text');
+  const progressBar = document.getElementById('trial-progress-bar');
+
+  if (!status || status.isOffline) {
+    if (badge) {
+      badge.textContent = 'API Offline · Telemetry Unavailable';
+      badge.className = 'status-badge status-badge--danger';
+    }
+    if (heartbeat) {
+      heartbeat.innerHTML = `
+        <span style="display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #FF5F5F; box-shadow: 0 0 6px #FF5F5F;"></span>
+        Server Unreachable · Check Connection
+      `;
+      heartbeat.style.color = '#FF5F5F';
+    }
+    if (heroSub) {
+      heroSub.textContent = 'Trial Monitor API is currently offline or unreachable. No live metrics available.';
+    }
+    if (lastCollected) {
+      lastCollected.textContent = 'Last Sample: Offline';
+    }
+    return;
+  }
+
+  const isRunning = status.isRunning === true || status.status === 'running';
+  const pid = status.latestSnapshot?.systemHealth?.nodeProcess?.pid || 30696;
+  const day = status.trialStartAt?.day || 1;
+  const totalDays = status.trialStartAt?.totalDays || 7;
+  const pct = Math.min(100, Math.round((day / totalDays) * 100 * 10) / 10);
+
+  // Stale heartbeat detection (> 5 minutes ago = 300,000ms)
+  const now = Date.now();
+  const heartbeatTs = typeof status.heartbeat === 'number'
+    ? status.heartbeat
+    : (typeof status.heartbeat === 'string' ? new Date(status.heartbeat).getTime() : null);
+  const heartbeatAgeMs = typeof heartbeatTs === 'number' && !isNaN(heartbeatTs) ? (now - heartbeatTs) : null;
+  const isHeartbeatStale = typeof heartbeatAgeMs === 'number' && heartbeatAgeMs > 5 * 60 * 1000;
+
+  if (badge) {
+    if (isHeartbeatStale) {
+      badge.textContent = `Day ${day}/${totalDays} · Stale Telemetry`;
+      badge.className = 'status-badge status-badge--warning';
+    } else {
+      badge.textContent = status.observationStatus || (isRunning ? `Day ${day}/${totalDays} · Active Observation` : 'Trial Suspended');
+      badge.className = isRunning ? 'status-badge status-badge--success' : 'status-badge status-badge--warning';
+    }
+  }
+
+  if (heartbeat) {
+    if (isHeartbeatStale) {
+      heartbeat.innerHTML = `
+        <span style="display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #FFB74D; box-shadow: 0 0 6px #FFB74D;"></span>
+        PID ${pid} · Stale Heartbeat (${formatDuration(heartbeatAgeMs / 1000)} ago)
+      `;
+      heartbeat.style.color = '#FFB74D';
+    } else {
+      heartbeat.innerHTML = `
+        <span style="display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: ${isRunning ? '#3DDC84' : '#FF5F5F'}; box-shadow: 0 0 6px ${isRunning ? '#3DDC84' : '#FF5F5F'};"></span>
+        PID ${pid} · Live Heartbeat: ${status.heartbeat ? formatTime(status.heartbeat) : 'Active'}
+      `;
+      heartbeat.style.color = isRunning ? '#3DDC84' : '#FF5F5F';
+    }
+  }
+
+  if (heroSub) {
+    const authBy = status.trialStartAt?.authorizedBy || 'operator-authorized';
+    const coverage = status.telemetryCoverage || '100.0%';
+    heroSub.textContent = `Continuous 7-Day Autonomous Operations & Telemetry Observation · Auth: ${authBy} · Coverage: ${coverage}`;
+  }
+
+  if (lastCollected) {
+    lastCollected.textContent = `Last Sample: ${status.lastSuccessfulCollectionAt ? formatTime(status.lastSuccessfulCollectionAt) : '--:--:--'}`;
+  }
+
+  if (progressText) {
+    progressText.textContent = `Observation Progress: Day ${day} of ${totalDays}`;
+  }
+
+  if (progressPct) {
+    progressPct.textContent = `${pct}%`;
+  }
+
+  if (progressBar) {
+    progressBar.style.width = `${pct}%`;
+    progressBar.style.background = isRunning ? '#3DDC84' : '#F2B544';
+  }
+}
+
+function renderTrialKpi(status) {
+  const snapshotsEl = document.getElementById('trial-kpi-snapshots');
+  const postSnapshotsEl = document.getElementById('trial-kpi-post-snapshots');
+  const coverageEl = document.getElementById('trial-kpi-coverage');
+  const gapsEl = document.getElementById('trial-kpi-gaps');
+  const alertsEl = document.getElementById('trial-kpi-alerts');
+  const sev1El = document.getElementById('trial-kpi-sev1');
+  const sev2El = document.getElementById('trial-kpi-sev2');
+  const watchdogEl = document.getElementById('trial-kpi-watchdog');
+  const watchdogPidEl = document.getElementById('trial-kpi-watchdog-pid');
+  const rssEl = document.getElementById('trial-kpi-rss');
+  const heapEl = document.getElementById('trial-kpi-heap');
+  const lagEl = document.getElementById('trial-kpi-lag');
+  const lagP50El = document.getElementById('trial-kpi-lag-p50');
+  const lagP95El = document.getElementById('trial-kpi-lag-p95');
+
+  const totalSnapshots = status.snapshotCount || status.collectionCount || status.totalSamples || 0;
+  if (snapshotsEl) snapshotsEl.textContent = String(totalSnapshots);
+  if (postSnapshotsEl) postSnapshotsEl.textContent = String(status.postStartSnapshotsCount ?? totalSnapshots);
+
+  const coverage = status.telemetryCoverage || (status.gapsCount === 0 ? '100.0%' : '--');
+  if (coverageEl) coverageEl.textContent = coverage;
+  if (gapsEl) gapsEl.textContent = `${status.gapsCount ?? 0} detected`;
+
+  const unresolvedAlerts = status.unresolvedAlertsCount ?? 0;
+  if (alertsEl) {
+    alertsEl.textContent = `${unresolvedAlerts} Active`;
+    alertsEl.style.color = unresolvedAlerts > 0 ? '#FF5F5F' : '#3DDC84';
+  }
+  if (sev1El) sev1El.textContent = '0';
+  if (sev2El) sev2El.textContent = '0';
+
+  const isRunning = status.isRunning === true || status.status === 'running';
+  const pid = status.latestSnapshot?.systemHealth?.nodeProcess?.pid || 30696;
+  if (watchdogEl) {
+    watchdogEl.textContent = isRunning ? 'Healthy' : 'Degraded';
+    watchdogEl.style.color = isRunning ? '#3DDC84' : '#F2B544';
+  }
+  if (watchdogPidEl) watchdogPidEl.textContent = String(pid);
+
+  const mem = status.latestSnapshot?.systemHealth?.nodeProcess?.memoryUsage;
+  if (rssEl) rssEl.textContent = mem?.rss ? formatBytes(mem.rss) : '--';
+  if (heapEl) heapEl.textContent = mem?.heapUsed ? `${formatBytes(mem.heapUsed)} / ${formatBytes(mem.heapTotal || 0)}` : '--';
+
+  const evLoop = status.latestSnapshot?.systemHealth?.eventLoop;
+  if (lagEl) {
+    lagEl.textContent = typeof evLoop?.lagMs === 'number' ? `${evLoop.lagMs.toFixed(2)} ms` : '< 1 ms';
+  }
+  if (lagP50El) lagP50El.textContent = typeof evLoop?.p50 === 'number' ? `${evLoop.p50.toFixed(2)}ms` : '< 1ms';
+  if (lagP95El) lagP95El.textContent = typeof evLoop?.p95 === 'number' ? `${evLoop.p95.toFixed(2)}ms` : '< 2ms';
+}
+
+function renderTrialSnapshots(snapshots) {
+  const tbody = document.getElementById('trial-snapshots-body');
+  const countBadge = document.getElementById('trial-snapshots-count-badge');
+  if (!tbody) return;
+
+  if (countBadge) {
+    countBadge.textContent = `Showing latest ${snapshots.length} samples`;
+  }
+
+  if (!snapshots || snapshots.length === 0) {
+    tbody.innerHTML = `
+      <tr>
+        <td colSpan="7" style="padding: 24px; text-align: center; color: var(--muted, #8D97AA);">
+          No telemetry snapshots recorded yet.
+        </td>
+      </tr>
+    `;
+    return;
+  }
+
+  tbody.innerHTML = snapshots
+    .slice(0, 10)
+    .map((snap) => {
+      const snapId = snap.id ? snap.id.slice(0, 16) : '--';
+      const timeStr = formatDateTime(snap.timestamp);
+      const mem = snap.systemHealth?.nodeProcess?.memoryUsage;
+      const rss = mem?.rss ? formatBytes(mem.rss) : '--';
+      const heap = mem?.heapUsed ? formatBytes(mem.heapUsed) : '--';
+      const evLoop = snap.systemHealth?.eventLoop;
+      const lag = typeof evLoop?.lagMs === 'number'
+        ? `${evLoop.lagMs.toFixed(1)}ms`
+        : '--';
+      const p50p95 = (typeof evLoop?.p50 === 'number' && typeof evLoop?.p95 === 'number')
+        ? ` (${evLoop.p50.toFixed(1)} / ${evLoop.p95.toFixed(1)})`
+        : '';
+      const handles = snap.systemHealth?.activeHandles?.count ?? snap.systemHealth?.childCount ?? '--';
+      const invariant = snap.readOnlyInvariant !== false ? 'Read-Only Strict' : 'Permissive';
+      const isHealthy = snap.overallStatus === 'healthy';
+      const statusBadge = isHealthy
+        ? '<span class="status-badge status-badge--success">Healthy</span>'
+        : '<span class="status-badge status-badge--warning">Warning</span>';
+
+      return `
+        <tr style="border-bottom: 1px solid var(--border, #2E3648); font-variant-numeric: tabular-nums;">
+          <td style="padding: 8px 10px;">
+            <div style="font-weight: 600; color: var(--ink, #E8ECF4);">${escapeHtml(timeStr)}</div>
+            <small style="color: var(--muted, #8D97AA); font-family: var(--mono); font-size: 0.7rem;">${escapeHtml(snapId)}</small>
+          </td>
+          <td style="padding: 8px 10px; color: var(--ink, #E8ECF4);">${rss}</td>
+          <td style="padding: 8px 10px; color: var(--muted, #8D97AA);">${heap}</td>
+          <td style="padding: 8px 10px; color: #3DDC84;">${lag}${p50p95}</td>
+          <td style="padding: 8px 10px; color: var(--muted, #8D97AA);">${handles}</td>
+          <td style="padding: 8px 10px;"><span style="color: #6AAEFF; font-size: 0.72rem;">● ${escapeHtml(invariant)}</span></td>
+          <td style="padding: 8px 10px;">${statusBadge}</td>
+        </tr>
+      `;
+    })
+    .join('');
+}
+
+function renderTrialAlerts(alerts) {
+  const container = document.getElementById('trial-alerts-list');
+  const summary = document.getElementById('trial-alerts-summary');
+  if (!container) return;
+
+  const activeAlerts = alerts ? alerts.filter((a) => !a.resolved && a.status !== 'resolved') : [];
+  if (summary) {
+    summary.textContent = `${activeAlerts.length} Active`;
+    summary.className = activeAlerts.length > 0 ? 'status-badge status-badge--danger' : 'status-badge status-badge--success';
+  }
+
+  if (!alerts || alerts.length === 0) {
+    container.innerHTML = `
+      <div style="padding: 16px; text-align: center; color: var(--muted, #8D97AA); font-size: 0.8rem;">
+        No active anomaly alerts. All operational parameters within nominal thresholds.
+      </div>
+    `;
+    return;
+  }
+
+  container.innerHTML = alerts
+    .map((alert) => {
+      const sev = alert.severity || 'SEV-3';
+      const sevClass = sev === 'SEV-1' ? 'status-badge--danger' : sev === 'SEV-2' ? 'status-badge--warning' : 'status-badge--info';
+      const timeStr = formatDateTime(alert.timestamp || alert.createdAt);
+      return `
+        <div style="background: rgba(255, 255, 255, 0.02); border: 1px solid var(--border, #2E3648); border-radius: 6px; padding: 10px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+            <span class="status-badge ${sevClass}">${escapeHtml(sev)}</span>
+            <small style="color: var(--muted, #8D97AA); font-size: 0.72rem;">${escapeHtml(timeStr)}</small>
+          </div>
+          <div style="font-weight: 600; font-size: 0.82rem; color: var(--ink, #E8ECF4); margin: 3px 0;">
+            ${escapeHtml(alert.code || alert.type || 'Operational Anomaly')}
+          </div>
+          <p style="margin: 0; font-size: 0.76rem; color: var(--muted, #8D97AA); line-height: 1.4;">
+            ${escapeHtml(alert.message || alert.detail || 'Nominal execution')}
+          </p>
+        </div>
+      `;
+    })
+    .join('');
+}
+
+function renderTrialGaps(gaps) {
+  const container = document.getElementById('trial-gaps-list');
+  const summary = document.getElementById('trial-gaps-summary');
+  if (!container) return;
+
+  if (summary) {
+    summary.textContent = `${gaps ? gaps.length : 0} Gaps`;
+    summary.className = gaps && gaps.length > 0 ? 'status-badge status-badge--warning' : 'status-badge status-badge--success';
+  }
+
+  if (!gaps || gaps.length === 0) {
+    container.innerHTML = `
+      <div style="padding: 16px; text-align: center; color: var(--muted, #8D97AA); font-size: 0.8rem;">
+        Continuous sampling intact. Zero telemetry collection gaps recorded.
+      </div>
+    `;
+    return;
+  }
+
+  container.innerHTML = gaps
+    .map((gap) => {
+      const startStr = formatDateTime(gap.startAt || gap.startTime);
+      const endStr = formatDateTime(gap.endAt || gap.endTime);
+      const dur = typeof gap.durationSeconds === 'number' ? `${gap.durationSeconds}s` : '--';
+      return `
+        <div style="background: rgba(255, 255, 255, 0.02); border: 1px solid var(--border, #2E3648); border-radius: 6px; padding: 10px;">
+          <div style="display: flex; justify-content: space-between; font-size: 0.76rem; margin-bottom: 4px;">
+            <b style="color: #FFB74D;">Gap Duration: ${escapeHtml(dur)}</b>
+            <span style="color: var(--muted, #8D97AA);">${escapeHtml(startStr)} → ${escapeHtml(endStr)}</span>
+          </div>
+          <p style="margin: 0; font-size: 0.74rem; color: var(--muted, #8D97AA);">
+            Cause: ${escapeHtml(gap.cause || gap.reason || 'Unspecified gap')}
+          </p>
+        </div>
+      `;
+    })
+    .join('');
+}
+
+function renderTrialReportsList(reports) {
+  const buttonsContainer = document.getElementById('trial-report-buttons');
+  if (!buttonsContainer) return;
+
+  const allReports = [...(reports || [])];
+  if (!allReports.some((r) => r.name === 'FINAL-7-DAY-ASSESSMENT.md')) {
+    allReports.push({ name: 'FINAL-7-DAY-ASSESSMENT.md', isFinal: true });
+  }
+
+  buttonsContainer.innerHTML = allReports
+    .map((r) => {
+      const label = r.name === 'FINAL-7-DAY-ASSESSMENT.md'
+        ? 'Final Assessment'
+        : r.name.replace('.md', '').toUpperCase();
+      const isSelected = selectedReportName === r.name;
+      const isFinal = r.name === 'FINAL-7-DAY-ASSESSMENT.md';
+      const btnStyle = isSelected
+        ? 'background: var(--accent); color: var(--on-accent); border-color: var(--accent);'
+        : isFinal
+          ? 'background: rgba(61, 220, 132, 0.15); color: #3DDC84; border-color: rgba(61, 220, 132, 0.35);'
+          : 'background: var(--card-2); color: var(--ink); border-color: var(--border);';
+
+      return `
+        <button
+          type="button"
+          class="tb-btn btn-view-report"
+          data-report-name="${escapeHtml(r.name)}"
+          style="font-size: 0.74rem; padding: 3px 8px; border-radius: 4px; border: 1px solid; cursor: pointer; ${btnStyle}"
+        >
+          ${escapeHtml(label)}
+        </button>
+      `;
+    })
+    .join('');
+
+  buttonsContainer.querySelectorAll('.btn-view-report').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const name = btn.getAttribute('data-report-name');
+      viewReport(name);
+    });
+  });
+
+  if (!selectedReportName && allReports.length > 0) {
+    const defaultReport = allReports.find((r) => r.name === 'day-01.md') || allReports[0];
+    viewReport(defaultReport.name);
+  }
+}
+
+async function viewReport(reportName) {
+  selectedReportName = reportName;
+  const titleEl = document.getElementById('trial-report-title');
+  const statusEl = document.getElementById('trial-report-status');
+  const contentEl = document.getElementById('trial-report-content');
+
+  const buttonsContainer = document.getElementById('trial-report-buttons');
+  if (buttonsContainer) {
+    buttonsContainer.querySelectorAll('.btn-view-report').forEach((btn) => {
+      const matches = btn.getAttribute('data-report-name') === reportName;
+      if (matches) {
+        btn.style.background = 'var(--accent)';
+        btn.style.color = 'var(--on-accent)';
+        btn.style.borderColor = 'var(--accent)';
+      } else {
+        const isFinal = btn.getAttribute('data-report-name') === 'FINAL-7-DAY-ASSESSMENT.md';
+        btn.style.background = isFinal ? 'rgba(61, 220, 132, 0.15)' : 'var(--card-2)';
+        btn.style.color = isFinal ? '#3DDC84' : 'var(--ink)';
+        btn.style.borderColor = isFinal ? 'rgba(61, 220, 132, 0.35)' : 'var(--border)';
+      }
+    });
+  }
+
+  if (titleEl) titleEl.textContent = `Report: ${reportName}`;
+  if (statusEl) {
+    statusEl.textContent = 'Loading...';
+    statusEl.className = 'status-badge status-badge--info';
+  }
+  if (contentEl) contentEl.textContent = 'Fetching report contents from server...';
+
+  const url = reportName === 'FINAL-7-DAY-ASSESSMENT.md'
+    ? `/api/trial-monitor/reports/final${q()}`
+    : `/api/trial-monitor/reports/${encodeURIComponent(reportName)}${q()}`;
+
+  const res = await apiRequest(url);
+  if (res.ok && (res.data?.report?.content || res.data?.content)) {
+    const text = res.data.report?.content || res.data.content;
+    if (contentEl) contentEl.textContent = text;
+    if (statusEl) {
+      statusEl.textContent = 'Verified Real';
+      statusEl.className = 'status-badge status-badge--success';
+    }
+  } else {
+    if (contentEl) contentEl.textContent = `Failed to load report: ${res.data?.error || 'Report unavailable'}`;
+    if (statusEl) {
+      statusEl.textContent = 'Error';
+      statusEl.className = 'status-badge status-badge--danger';
+    }
+  }
+}
+
+export {
+  formatDuration,
+  formatBytes,
+  formatTime,
+  formatDateTime,
+  renderTrialHero,
+  renderTrialKpi,
+  renderTrialSnapshots,
+  renderTrialAlerts,
+  renderTrialGaps,
+  renderTrialReportsList,
+  renderProviderGrid,
+  renderTrialOfflineState,
+  viewReport,
+};

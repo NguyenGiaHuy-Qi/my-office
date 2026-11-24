@@ -81,7 +81,7 @@ test('Phase 2 — Scenario B: One Codex App task updates card in place within sa
   assert.ok(initialTaskId.includes('turn-1001'));
 
   // Event 2 in same turn
-  const task2 = aggregator.ingest({
+  aggregator.ingest({
     id: 302,
     sess: sessionId,
     sessionId,
@@ -94,7 +94,7 @@ test('Phase 2 — Scenario B: One Codex App task updates card in place within sa
   });
 
   // Event 3 in same turn
-  const task3 = aggregator.ingest({
+  aggregator.ingest({
     id: 303,
     sess: sessionId,
     sessionId,
