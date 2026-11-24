@@ -66,6 +66,11 @@ export class TrialMonitor {
         maxHistory: options.maxHistory || 1440,
         outputDir: this.outputDir,
         autoStart: options.autoStart || false,
+        // reportGenerator is assigned below; this only runs after a trial day has ended
+        onDayComplete: async (day, isLastDay) => {
+          await this.reportGenerator.generateDailyReport(day);
+          if (isLastDay) await this.reportGenerator.generateFinalAssessment();
+        },
       });
     }
 
@@ -199,6 +204,8 @@ export class TrialMonitor {
       gapsCount: gaps.length,
       telemetryGapStatus: schedulerStatus.telemetryGapStatus,
       telemetryCoverage: schedulerStatus.telemetryCoverage,
+      stallRecoveries: schedulerStatus.stallRecoveries,
+      trialDay: schedulerStatus.trialDay,
       reportOutputPath: schedulerStatus.reportOutputPath,
       latestSnapshot,
       overallHealth: latestSnapshot?.overallStatus || 'unknown',

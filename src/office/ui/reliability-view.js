@@ -833,15 +833,18 @@ function renderTrialHero(status) {
 
   const isRunning = status.isRunning === true || status.status === 'running';
   const pid = status.latestSnapshot?.systemHealth?.nodeProcess?.pid || 30696;
-  const day = status.trialStartAt?.day || 1;
-  const totalDays = status.trialStartAt?.totalDays || 7;
+  // trialStartAt.day is the start record (always 1); trialDay is computed by the server
+  const day = status.trialDay?.day || status.trialStartAt?.day || 1;
+  const totalDays = status.trialDay?.totalDays || status.trialStartAt?.totalDays || 7;
   const pct = Math.min(100, Math.round((day / totalDays) * 100 * 10) / 10);
 
   // Stale heartbeat detection (> 5 minutes ago = 300,000ms)
   const now = Date.now();
-  const heartbeatTs = typeof status.heartbeat === 'number'
-    ? status.heartbeat
-    : (typeof status.heartbeat === 'string' ? new Date(status.heartbeat).getTime() : null);
+  // Staleness = age of the last real sample; status.heartbeat is stamped per request and never ages
+  const liveTs = typeof status.lastSampleTimestamp === 'number' ? status.lastSampleTimestamp : status.heartbeat;
+  const heartbeatTs = typeof liveTs === 'number'
+    ? liveTs
+    : (typeof liveTs === 'string' ? new Date(liveTs).getTime() : null);
   const heartbeatAgeMs = typeof heartbeatTs === 'number' && !isNaN(heartbeatTs) ? (now - heartbeatTs) : null;
   const isHeartbeatStale = typeof heartbeatAgeMs === 'number' && heartbeatAgeMs > 5 * 60 * 1000;
 
