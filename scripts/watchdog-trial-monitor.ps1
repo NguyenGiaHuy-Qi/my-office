@@ -56,7 +56,6 @@ function Write-IncidentLog {
         $logEntry += " | Details: {$detailStr}"
     }
 
-    Write-Host $logEntry -ForegroundColor $(if ($Severity -eq "SEV-1") { "Red" } elseif ($Severity -eq "SEV-2") { "Yellow" } else { "Cyan" })
     Add-Content -Path $IncidentLogPath -Value $logEntry -ErrorAction SilentlyContinue
 
     # Update persistent operator alerts JSON for UI and operators
@@ -74,9 +73,6 @@ function Write-IncidentLog {
         $json = $alertPayload | ConvertTo-Json -Depth 5
         [System.IO.File]::WriteAllText($AlertFilePath, $json, [System.Text.Encoding]::UTF8)
     } catch {}
-
-    # Operator audible notice and Windows Event Log attempt
-    try { [System.Console]::Beep(1000, 300) } catch {}
 }
 
 function Clear-OperatorAlert {
@@ -189,7 +185,6 @@ if ($isDown -or $heartbeatStale) {
     }
 
     Write-IncidentLog -Severity $severity -IssueCode $code -Message $msg -Details $details
-    Write-Host "[WATCHDOG ACTION] OPERATOR ALERT TRIGGERED. In accordance with read-only trial rules, no automatic restart or process kill was performed." -ForegroundColor Magenta
     exit 1
 }
 
@@ -203,7 +198,6 @@ $cov = if ($httpStatusData) { $httpStatusData.telemetryCoverage } else { "N/A" }
 $startDisplay = if ($diskTrialStartAt) { $diskTrialStartAt.asiaHoChiMinh } else { "N/A" }
 
 $healthyMsg = "[$nowVn] [OK] My Office server is HEALTHY. Heartbeat age: ${heartbeatAgeSec}s. Coverage: $cov. Post-start snapshots: $postSnapshots. trialStartAt: $startDisplay"
-Write-Host $healthyMsg -ForegroundColor Green
 
 # Append to startup/audit log periodically
 Add-Content -Path (Join-Path $RootDir "data\trial-monitor\server-startup.log") -Value $healthyMsg -ErrorAction SilentlyContinue

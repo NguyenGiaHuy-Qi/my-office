@@ -13,9 +13,9 @@ if %errorlevel% neq 0 (
 )
 
 :: Check if port 4310 is already in use (prevent duplicate instance)
-netstat -ano | findstr /R /C:":4310 " >nul 2>&1
+netstat -ano | findstr /I "LISTENING" | findstr ":4310" >nul 2>&1
 if %errorlevel% equ 0 (
-  echo [%date% %time%] [INFO] Port 4310 is already in use. My Office is already running. Skipping startup. >> "data\trial-monitor\server-startup.log"
+  (echo [%date% %time%] [INFO] Port 4310 is already in use. My Office is already running. Skipping startup. >> "data\trial-monitor\server-startup.log") 2>nul
   exit /b 0
 )
 
