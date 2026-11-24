@@ -1,17 +1,19 @@
 # Operational Trial Daily Report: Day 07
-**Date:** 2026-11-12  
-**Generated At:** 2026-11-12T18:14:18.766Z  
-**Status:** `UNKNOWN`  
+**Date:** 2026-11-18  
+**Generated At:** 2026-11-24T19:59:11.589Z  
+**Status:** `DEGRADED`  
 
 ---
 
 ## Executive Summary
 During Day 07 of the operational trial:
-- **Snapshots Sampled:** 0 (unmeasured / monitoring inactive)
+- **Snapshots Sampled:** 0 retained (samples were taken but have rotated out of the 24h snapshot buffer)
+- **Observation Window:** 2026-11-18T18:30:04.209Z → 2026-11-19T18:30:04.209Z
+- **Telemetry Coverage:** 16.0% (20h 9m 35s of 24h unobserved)
 - **Total Alerts Detected:** 0 (SEV-1: 0, SEV-2: 0, SEV-3: 0, SEV-4: 0)
 - **Incidents Resolved:** 0
 - **Unresolved Incidents:** 0
-- **Monitoring Gaps Recorded:** 0 (0s total downtime, 0 missed intervals)
+- **Monitoring Gaps Recorded:** 1 (20h 9m 35s total downtime, 2099 missed intervals)
 
 ### Key Operational Indicators
 | Metric | Observed Value | Status |
@@ -27,9 +29,7 @@ During Day 07 of the operational trial:
 ## 1. Verified Stable
 The following subsystems and invariants operated continuously within specification without failure:
 
-- **Safety Boundaries & Emergency Stop:** System operated within authorized autonomy guardrails without unhandled safety trips.
-- **Process Supervisor:** Process identity safety verified; zero re-assigned PID signals; no orphan child leaks.
-- **Task Execution Engine:** Agent dispatches completed within expected SLA boundaries without persistent hangs.
+- *No subsystems could be verified as stable for this period (insufficient telemetry or ongoing alerts).*
 
 ## 2. Verified Incidents
 No resolved incidents occurred during this period.
@@ -38,7 +38,14 @@ No resolved incidents occurred during this period.
 Zero active or unresolved incidents.
 
 ## 4. Monitoring Gaps
-Continuous telemetry was maintained throughout the observation cycle (0 gaps detected).
+Detected **1** telemetry gap(s) where sampling was interrupted:
+
+| Gap ID | Start Time | End Time | Duration | Missed Intervals | Reason |
+|---|---|---|---|---|---|
+| `gap-cb48d32b-de0b-4a7d-b08e-4c159533cd85` | 2026-11-18T22:20:28.656Z | 2026-11-20T09:19:35.505Z | 34h 59m 6s | 2099 | Server restart downtime: telemetry sampling paused during server outage |
+
+> [!NOTE]
+> In accordance with the truthfulness policy, all metrics during gap windows are explicitly recorded as unmeasured rather than interpolated.
 
 ## 5. Not Tested
 The following conditions or disaster recovery pathways were not exercised during Day 07:
@@ -47,5 +54,4 @@ The following conditions or disaster recovery pathways were not exercised during
 - **Concurrent Conflict Collision:** Maximum stress concurrency limit (>100 simultaneous agent dispatches) not saturated.
 
 ## 6. Recommendations
-1. **Maintain Steady-State Observation:** Continue 60-second periodic telemetry sampling.
-2. **Routine Journal Flush:** Verify automated WAL checkpoint archiving remains healthy.
+2. **Investigate Telemetry Gaps:** Review server logs between gap intervals to determine cause of interrupted monitoring.

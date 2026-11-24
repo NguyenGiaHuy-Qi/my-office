@@ -146,8 +146,11 @@ $isDown = -not $httpSuccess
 $heartbeatStale = $false
 $heartbeatAgeSec = $null
 
-# Resolve latest heartbeat between HTTP probe and disk record
-$resolvedHeartbeat = if ($httpStatusData -and $httpStatusData.heartbeat) {
+# Liveness = time of the last real sample. The status "heartbeat" is stamped at request time,
+# so it stays fresh even when sampling has stopped (missed the 39h stall on 2026-11-23).
+$resolvedHeartbeat = if ($httpStatusData -and $httpStatusData.lastSampleTimestamp) {
+    $httpStatusData.lastSampleTimestamp
+} elseif ($httpStatusData -and $httpStatusData.heartbeat) {
     $httpStatusData.heartbeat
 } elseif ($diskHeartbeat) {
     $diskHeartbeat

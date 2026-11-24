@@ -19,6 +19,49 @@ import {
   validateAlert,
 } from './trial-contracts.mjs';
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** Current trial day (1-based, capped at totalDays) and whether the trial window has ended. */
+export function trialDay(trialStartAt, now) {
+  if (!trialStartAt || typeof trialStartAt.epoch !== 'number') return null;
+  const totalDays = trialStartAt.totalDays || 7;
+  const day = Math.max(1, Math.floor((now - trialStartAt.epoch) / DAY_MS) + 1);
+  return { day: Math.min(day, totalDays), totalDays, complete: day > totalDays };
+}
+
+/** Unobserved ms inside [from, to): gap intervals clipped to the window and merged so overlaps count once. */
+export function gapMsInWindow(gaps, from, to) {
+  const spans = (gaps || [])
+    .map((g) => [Math.max(from, g.startTime ?? g.endTime - (g.durationMs || 0)), Math.min(to, g.endTime)])
+    .filter(([a, b]) => b > a)
+    .sort((x, y) => x[0] - y[0]);
+  let total = 0;
+  let cur = null;
+  for (const [a, b] of spans) {
+    if (!cur || a > cur[1]) { if (cur) total += cur[1] - cur[0]; cur = [a, b]; } else cur[1] = Math.max(cur[1], b);
+  }
+  return cur ? total + cur[1] - cur[0] : total;
+}
+
+/** Observed share of the trial so far (window capped at totalDays), e.g. "29.3%". */
+export function trialCoverage(trialStartAt, gaps, now) {
+  if (!trialStartAt || typeof trialStartAt.epoch !== 'number') return '100.0%';
+  const to = Math.min(now, trialStartAt.epoch + (trialStartAt.totalDays || 7) * DAY_MS);
+  const span = Math.max(1, to - trialStartAt.epoch);
+  return `${Math.max(0, (1 - gapMsInWindow(gaps, trialStartAt.epoch, to) / span) * 100).toFixed(1)}%`;
+}
+
+function observationLabel(trialStartAt, now) {
+  const d = trialDay(trialStartAt, now);
+  if (!d) return 'Pre-Trial Verification';
+  return d.complete ? `Trial complete (${d.totalDays}/${d.totalDays} days)` : `Day ${d.day}/${d.totalDays} (Active Observation)`;
+}
+
+function dayReportPath(rootDir, trialStartAt, now) {
+  const n = trialDay(trialStartAt, now)?.day || 1;
+  return path.resolve(rootDir, `reports/operational-trial/day-${String(n).padStart(2, '0')}.md`);
+}
+
 export class TrialScheduler {
   /**
    * @param {Object} options
@@ -59,6 +102,8 @@ export class TrialScheduler {
       ? options.maxHistory
       : 1440;
     this.now = typeof options.now === 'function' ? options.now : Date.now;
+    // Called as onDayComplete(dayNumber, isLastDay) once per finished trial day
+    this.onDayComplete = typeof options.onDayComplete === 'function' ? options.onDayComplete : null;
 
     // Strict Read-Only Invariant
     this.isReadOnly = true;
@@ -233,22 +278,14 @@ export class TrialScheduler {
         fs.mkdirSync(path.dirname(statusFilePath), { recursive: true });
         const nextScheduledMs = this.lastSampleTimestamp ? this.lastSampleTimestamp + this.intervalMs : this.now() + this.intervalMs;
 
-        // Calculate accurate telemetry coverage percentage (never masking downtime as uptime)
-        let telemetryCoverage = '100.0%';
-        if (this.trialStartAt && typeof this.trialStartAt.epoch === 'number') {
-          const trialElapsedMs = Math.max(1, this.now() - this.trialStartAt.epoch);
-          const trialGaps = this.gaps.filter(g => g.timestamp >= this.trialStartAt.epoch || g.endTime >= this.trialStartAt.epoch);
-          const totalGapDurationMs = trialGaps.reduce((acc, g) => acc + (g.durationMs || 0), 0);
-          const coverageRatio = Math.max(0, Math.min(100, ((trialElapsedMs - totalGapDurationMs) / trialElapsedMs) * 100));
-          telemetryCoverage = `${coverageRatio.toFixed(1)}%`;
-        }
+        const telemetryCoverage = trialCoverage(this.trialStartAt, this.gaps, this.now());
 
         const statusPayload = {
           monitorStatus: this.status,
           heartbeat: this.now(),
           processId: process.pid,
           trialStartAt: this.trialStartAt,
-          observationStatus: this.trialStartAt ? 'Day 1/7 (Active Observation)' : 'Pre-Trial Verification',
+          observationStatus: observationLabel(this.trialStartAt, this.now()),
           lastSuccessfulCollectionAt: this.lastSampleTimestamp ? new Date(this.lastSampleTimestamp).toISOString() : null,
           lastSuccessfulCollectionTimestamp: this.lastSampleTimestamp,
           nextScheduledCollectionAt: new Date(nextScheduledMs).toISOString(),
@@ -263,7 +300,7 @@ export class TrialScheduler {
             latestGap: this.gaps[this.gaps.length - 1] || null,
           },
           telemetryCoverage,
-          reportOutputPath: path.resolve(this.rootDir, 'reports/operational-trial/day-01.md'),
+          reportOutputPath: dayReportPath(this.rootDir, this.trialStartAt, this.now()),
           uptimeSeconds: Math.floor((this.stats.startTime ? Math.max(0, this.now() - this.stats.startTime) : 0) / 1000),
           isReadOnly: true,
         };
@@ -359,6 +396,7 @@ export class TrialScheduler {
 
       // Persist state to disk
       this.saveState();
+      this._reportCompletedDays(sampleTime);
 
       return {
         snapshot,
@@ -399,6 +437,7 @@ export class TrialScheduler {
       preTrialSnapshotsCount: preTrialCount,
       status: 'Day 1/7 (Active Observation)',
     };
+    this.stats.reportedDays = 0;
 
     this.saveState();
     return this.trialStartAt;
@@ -418,19 +457,54 @@ export class TrialScheduler {
       this.stats.startTime = this.now();
     }
 
-    // Run first sample immediately
-    this.sampleNow().catch(() => {});
+    this._arm();
+    return this;
+  }
 
-    // Schedule periodic loop
+  /**
+   * Fires onDayComplete for every trial day that has ended since the last call, in order, while that
+   * day's snapshots are still in the 24h buffer. Days that ended while the server was down are caught
+   * up on the first sample after it comes back.
+   */
+  _reportCompletedDays(now) {
+    const t = this.trialStartAt;
+    if (!this.onDayComplete || !t || typeof t.epoch !== 'number') return;
+    const total = t.totalDays || 7;
+    const done = Math.min(total, Math.floor((now - t.epoch) / DAY_MS));
+    const from = this.stats.reportedDays || 0;
+    if (done <= from) return;
+    this.stats.reportedDays = done;
+    this.saveState();
+    let chain = Promise.resolve();
+    for (let d = from + 1; d <= done; d++) chain = chain.then(() => this.onDayComplete(d, d === total));
+    chain.catch((err) => console.warn(`[trial-monitor] day report failed: ${err?.message || err}`));
+  }
+
+  /** (Re)creates the periodic timer and takes one sample now. */
+  _arm() {
+    if (this._timer) clearInterval(this._timer);
+    this.sampleNow().catch(() => {});
     this._timer = setInterval(() => {
       this.sampleNow().catch(() => {});
     }, this.intervalMs);
-
     if (this._timer && typeof this._timer.unref === 'function') {
       this._timer.unref();
     }
+  }
 
-    return this;
+  /**
+   * Sampling silently stopped once (11/23, process alive, cause unproven): if no sample landed for
+   * 3 intervals while running, drop the in-flight flag and re-arm. Called from getStatus(), which
+   * the external watchdog polls every 3 minutes, so recovery does not depend on the dead timer.
+   */
+  _recoverIfStalled(currentTime) {
+    if (this.status !== 'running' || this.lastSampleTimestamp === null) return;
+    const ageMs = currentTime - this.lastSampleTimestamp;
+    if (ageMs <= this.intervalMs * 3) return;
+    this.stats.stallRecoveries = (this.stats.stallRecoveries || 0) + 1;
+    console.warn(`[trial-monitor] sampling stalled ${Math.round(ageMs / 1000)}s (inFlight=${this._sampling}); re-arming timer (recovery #${this.stats.stallRecoveries})`);
+    this._sampling = false;
+    this._arm();
   }
 
   /**
@@ -519,6 +593,7 @@ export class TrialScheduler {
    */
   getStatus() {
     const currentTime = this.now();
+    this._recoverIfStalled(currentTime);
     const uptimeMs = this.stats.startTime ? Math.max(0, currentTime - this.stats.startTime) : 0;
 
     const preTrialCount = this.trialStartAt ? this.trialStartAt.preTrialSnapshotsCount : this.snapshots.length;
@@ -533,7 +608,7 @@ export class TrialScheduler {
       storePath: this.resolvedStorePath,
       heartbeat: currentTime,
       trialStartAt: this.trialStartAt,
-      observationStatus: this.trialStartAt ? 'Day 1/7 (Active Observation)' : 'Pre-Trial Verification',
+      observationStatus: observationLabel(this.trialStartAt, this.now()),
       lastSuccessfulCollectionAt: this.lastSampleTimestamp ? new Date(this.lastSampleTimestamp).toISOString() : null,
       lastSampleTimestamp: this.lastSampleTimestamp,
       nextScheduledCollectionAt: new Date(nextScheduledMs).toISOString(),
@@ -549,8 +624,10 @@ export class TrialScheduler {
         totalGaps: this.gaps.length,
         latestGap: this.gaps[this.gaps.length - 1] || null,
       },
-      telemetryCoverage: '100.0%',
-      reportOutputPath: path.resolve(this.rootDir, 'reports/operational-trial/day-01.md'),
+      telemetryCoverage: trialCoverage(this.trialStartAt, this.gaps, currentTime),
+      stallRecoveries: this.stats.stallRecoveries || 0,
+      trialDay: trialDay(this.trialStartAt, currentTime),
+      reportOutputPath: dayReportPath(this.rootDir, this.trialStartAt, this.now()),
       uptimeMs,
       latestSnapshot: this.getLatestSnapshot(),
       isReadOnly: true,

@@ -23,6 +23,10 @@ import {
   ALERT_SEVERITY_DEFINITIONS,
   HEALTH_STATUSES,
 } from './trial-contracts.mjs';
+import { gapMsInWindow } from './trial-scheduler.mjs';
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+const gapStart = (g) => g.startTime ?? g.endTime - (g.durationMs || 0);
 
 export const DEFAULT_REPORTS_DIR = path.resolve(process.cwd(), 'reports/operational-trial');
 
@@ -91,18 +95,18 @@ export async function generateDailyReport({
 } = {}) {
   const dayStr = String(dayNumber).padStart(2, '0');
   const fileName = `day-${dayStr}.md`;
-  const reportDate = date || new Date().toISOString().slice(0, 10);
 
-  // Preserve pre-trial snapshots in raw data, but exclude them from operational trial statistics
-  const operationalSnapshots = trialStartAt && typeof trialStartAt.epoch === 'number'
-    ? snapshots.filter((s) => s.timestamp >= trialStartAt.epoch)
-    : snapshots;
-  const operationalAlerts = trialStartAt && typeof trialStartAt.epoch === 'number'
-    ? alerts.filter((a) => a.timestamp >= trialStartAt.epoch)
-    : alerts;
-  const operationalGaps = trialStartAt && typeof trialStartAt.epoch === 'number'
-    ? gaps.filter((g) => g.timestamp >= trialStartAt.epoch || g.endTime >= trialStartAt.epoch)
-    : gaps;
+  // With a trial start, day N covers exactly [start + (N-1)·24h, start + N·24h).
+  const hasStart = trialStartAt && typeof trialStartAt.epoch === 'number';
+  const winFrom = hasStart ? trialStartAt.epoch + (dayNumber - 1) * DAY_MS : -Infinity;
+  const winTo = hasStart ? winFrom + DAY_MS : Infinity;
+  const reportDate = date || new Date(hasStart ? winFrom : Date.now()).toISOString().slice(0, 10);
+  const inWindow = (t) => t >= winFrom && t < winTo;
+
+  // Pre-trial snapshots stay in raw data but are excluded from trial statistics
+  const operationalSnapshots = hasStart ? snapshots.filter((s) => inWindow(s.timestamp)) : snapshots;
+  const operationalAlerts = hasStart ? alerts.filter((a) => inWindow(a.timestamp)) : alerts;
+  const operationalGaps = hasStart ? gaps.filter((g) => g.endTime > winFrom && gapStart(g) < winTo) : gaps;
 
   // Group alerts into verified (resolved) and unresolved
   const verifiedIncidents = operationalAlerts.filter((a) => a.resolved === true || a.status === 'resolved');
@@ -133,9 +137,12 @@ export async function generateDailyReport({
     ? Math.round(p95Latencies.reduce((a, b) => a + b, 0) / p95Latencies.length)
     : null;
 
-  // Total gap duration (filtered to operational trial gaps only)
-  const totalGapDurationMs = operationalGaps.reduce((acc, g) => acc + (g.durationMs || 0), 0);
+  // Gap time inside this day only (overlaps merged); without a trial start, fall back to the raw sum
+  const totalGapDurationMs = hasStart
+    ? gapMsInWindow(operationalGaps, winFrom, winTo)
+    : operationalGaps.reduce((acc, g) => acc + (g.durationMs || 0), 0);
   const totalMissedIntervals = operationalGaps.reduce((acc, g) => acc + (g.missedIntervals || 0), 0);
+  const coveragePct = hasStart ? ((1 - totalGapDurationMs / DAY_MS) * 100).toFixed(1) : null;
 
   // Overall Health assessment for the day
   let dayOverallStatus = HEALTH_STATUSES.HEALTHY;
@@ -160,8 +167,15 @@ export async function generateDailyReport({
   lines.push('');
   lines.push('## Executive Summary');
   lines.push(`During Day ${dayStr} of the operational trial:`);
-  lines.push(`- **Snapshots Sampled:** ${snapshotCount > 0 ? snapshotCount : '0 (unmeasured / monitoring inactive)'}`);
-  lines.push(`- **Total Alerts Detected:** ${alerts.length} (SEV-1: ${sev1Count}, SEV-2: ${sev2Count}, SEV-3: ${sev3Count}, SEV-4: ${sev4Count})`);
+  const noSnapshots = coveragePct !== null && Number(coveragePct) > 0
+    ? '0 retained (samples were taken but have rotated out of the 24h snapshot buffer)'
+    : '0 (unmeasured / monitoring inactive)';
+  lines.push(`- **Snapshots Sampled:** ${snapshotCount > 0 ? snapshotCount : noSnapshots}`);
+  if (coveragePct !== null) {
+    lines.push(`- **Observation Window:** ${formatTimestamp(winFrom)} → ${formatTimestamp(winTo)}`);
+    lines.push(`- **Telemetry Coverage:** ${coveragePct}% (${formatDuration(totalGapDurationMs)} of 24h unobserved)`);
+  }
+  lines.push(`- **Total Alerts Detected:** ${operationalAlerts.length} (SEV-1: ${sev1Count}, SEV-2: ${sev2Count}, SEV-3: ${sev3Count}, SEV-4: ${sev4Count})`);
   lines.push(`- **Incidents Resolved:** ${verifiedIncidents.length}`);
   lines.push(`- **Unresolved Incidents:** ${unresolvedIncidents.length}`);
   lines.push(`- **Monitoring Gaps Recorded:** ${operationalGaps.length} (${formatDuration(totalGapDurationMs)} total downtime, ${totalMissedIntervals} missed intervals)`);
@@ -184,17 +198,18 @@ export async function generateDailyReport({
   lines.push('The following subsystems and invariants operated continuously within specification without failure:');
   lines.push('');
 
+  // Only claim stability that a snapshot from this day actually shows
   const stableItems = [];
   if (latestSnapshot?.reliability?.wal?.corruptRecordsCount === 0) {
     stableItems.push('- **WAL Journal Durability:** Contiguous event sequence preserved; zero torn-writes or checksum integrity corruptions.');
   }
-  if (!latestSnapshot?.safety?.emergencyStop?.halted) {
+  if (latestSnapshot?.safety?.emergencyStop && !latestSnapshot.safety.emergencyStop.halted) {
     stableItems.push('- **Safety Boundaries & Emergency Stop:** System operated within authorized autonomy guardrails without unhandled safety trips.');
   }
-  if ((latestSnapshot?.reliability?.processes?.orphans || 0) === 0) {
+  if (latestSnapshot?.reliability?.processes && (latestSnapshot.reliability.processes.orphans || 0) === 0) {
     stableItems.push('- **Process Supervisor:** Process identity safety verified; zero re-assigned PID signals; no orphan child leaks.');
   }
-  if ((latestSnapshot?.agentHealth?.executions?.stalled || 0) === 0) {
+  if (latestSnapshot?.agentHealth?.executions && (latestSnapshot.agentHealth.executions.stalled || 0) === 0) {
     stableItems.push('- **Task Execution Engine:** Agent dispatches completed within expected SLA boundaries without persistent hangs.');
   }
   if (stableItems.length === 0) {
@@ -325,19 +340,18 @@ export async function generateFinalAssessment({
   trialStartAt = null,
   outputDir = DEFAULT_REPORTS_DIR,
   writeToFile = true,
+  now = Date.now(),
 } = {}) {
   const fileName = 'FINAL-7-DAY-ASSESSMENT.md';
 
-  // Filter operational items using trialStartAt
-  const operationalSnapshots = trialStartAt && typeof trialStartAt.epoch === 'number'
-    ? snapshots.filter((s) => s.timestamp >= trialStartAt.epoch)
-    : snapshots;
-  const operationalAlerts = trialStartAt && typeof trialStartAt.epoch === 'number'
-    ? alerts.filter((a) => a.timestamp >= trialStartAt.epoch)
-    : alerts;
-  const operationalGaps = trialStartAt && typeof trialStartAt.epoch === 'number'
-    ? gaps.filter((g) => g.timestamp >= trialStartAt.epoch || g.endTime >= trialStartAt.epoch)
-    : gaps;
+  // With a trial start, the assessment covers exactly [start, start + days·24h)
+  const hasStart = trialStartAt && typeof trialStartAt.epoch === 'number';
+  const winFrom = hasStart ? trialStartAt.epoch : -Infinity;
+  const winTo = hasStart ? winFrom + days * DAY_MS : Infinity;
+  const inWindow = (t) => t >= winFrom && t < winTo;
+  const operationalSnapshots = hasStart ? snapshots.filter((s) => inWindow(s.timestamp)) : snapshots;
+  const operationalAlerts = hasStart ? alerts.filter((a) => inWindow(a.timestamp)) : alerts;
+  const operationalGaps = hasStart ? gaps.filter((g) => g.endTime > winFrom && gapStart(g) < winTo) : gaps;
 
   const verifiedIncidents = operationalAlerts.filter((a) => a.resolved === true || a.status === 'resolved');
   const unresolvedIncidents = operationalAlerts.filter((a) => a.resolved !== true && a.status !== 'resolved');
@@ -347,13 +361,16 @@ export async function generateFinalAssessment({
   const sev3Count = operationalAlerts.filter((a) => a.severity === ALERT_SEVERITIES.SEV_3).length;
   const sev4Count = operationalAlerts.filter((a) => a.severity === ALERT_SEVERITIES.SEV_4).length;
 
-  const totalGapDurationMs = operationalGaps.reduce((acc, g) => acc + (g.durationMs || 0), 0);
+  const totalGapDurationMs = hasStart
+    ? gapMsInWindow(operationalGaps, winFrom, winTo)
+    : operationalGaps.reduce((acc, g) => acc + (g.durationMs || 0), 0);
   const totalMissedIntervals = operationalGaps.reduce((acc, g) => acc + (g.missedIntervals || 0), 0);
 
-  // Calculate approximate availability percentage over the trial window
-  const trialTotalMs = Math.max(1, days * 24 * 60 * 60 * 1000);
+  // Availability over the trial window
+  const trialTotalMs = Math.max(1, days * DAY_MS);
   const uptimeRatio = Math.max(0, Math.min(1, (trialTotalMs - totalGapDurationMs) / trialTotalMs));
   const availabilityPct = (uptimeRatio * 100).toFixed(2);
+  const windowElapsed = !hasStart || now >= winTo;
 
   // Verdict determination
   let verdict = 'READY FOR PRODUCTION ROLLOUT';
@@ -361,6 +378,12 @@ export async function generateFinalAssessment({
   if (sev1Count > 0 || unresolvedIncidents.some((a) => a.severity === ALERT_SEVERITIES.SEV_2)) {
     verdict = 'BLOCKED: CRITICAL RELIABILITY / INTEGRITY ISSUES UNRESOLVED';
     verdictClass = 'FAIL';
+  } else if (!windowElapsed) {
+    verdict = 'INCOMPLETE: TRIAL WINDOW HAS NOT ELAPSED';
+    verdictClass = 'INCOMPLETE';
+  } else if (parseFloat(availabilityPct) < 90.0) {
+    verdict = 'INCONCLUSIVE: INSUFFICIENT TELEMETRY COVERAGE';
+    verdictClass = 'INCONCLUSIVE';
   } else if (sev2Count > 2 || unresolvedIncidents.length > 0 || parseFloat(availabilityPct) < 99.0) {
     verdict = 'CONDITIONALLY READY: PENDING REMEDIATION OF IDENTIFIED WARNINGS';
     verdictClass = 'WARN';
@@ -389,33 +412,47 @@ export async function generateFinalAssessment({
   lines.push('### Operational Scorecard');
   lines.push('| Operational Domain | Evaluation Criteria | Result | Status |');
   lines.push('|---|---|---|---|');
-  lines.push(`| **WAL & State Durability** | Zero corrupt records, torn-write truncation integrity | 100% durable | Verified Stable |`);
-  lines.push(`| **Process Identity Safety** | Zero re-assigned PID kills, clean child isolation | 0 PID collisions | Verified Stable |`);
-  lines.push(`| **Autonomous Safety Gates** | Mandatory approval enforcement, emergency stop halt | Strict compliance | Verified Stable |`);
-  lines.push(`| **Incident Remediation** | Total alert incidents / resolved | ${verifiedIncidents.length} resolved / ${alerts.length} total | ${unresolvedIncidents.length === 0 ? 'Verified Stable' : 'Attention Needed'} |`);
+  // Scorecard rows come from snapshots inside the window; nothing is claimed without one
+  const walSeen = operationalSnapshots.filter((s) => s.reliability?.wal);
+  const procSeen = operationalSnapshots.filter((s) => s.reliability?.processes);
+  const stopSeen = operationalSnapshots.filter((s) => s.safety?.emergencyStop);
+  const maxCorrupt = Math.max(0, ...walSeen.map((s) => s.reliability.wal.corruptRecordsCount || 0));
+  const maxOrphans = Math.max(0, ...procSeen.map((s) => s.reliability.processes.orphans || 0));
+  const halts = stopSeen.filter((s) => s.safety.emergencyStop.halted).length;
+  const row = (seen, okText, badText, ok) => !seen.length
+    ? 'unmeasured | Not Verified'
+    : `${ok ? okText : badText} (${seen.length} snapshots) | ${ok ? 'Verified Stable' : 'ALERT'}`;
+  lines.push(`| **WAL & State Durability** | Zero corrupt records | ${row(walSeen, '0 corrupt records', `${maxCorrupt} corrupt records`, maxCorrupt === 0)} |`);
+  lines.push(`| **Process Identity Safety** | Zero orphan child processes | ${row(procSeen, '0 orphans', `up to ${maxOrphans} orphans`, maxOrphans === 0)} |`);
+  lines.push(`| **Autonomous Safety Gates** | Emergency stop not tripped | ${row(stopSeen, 'never halted', `halted in ${halts} snapshots`, halts === 0)} |`);
+  lines.push(`| **Incident Remediation** | Total alert incidents / resolved | ${verifiedIncidents.length} resolved / ${operationalAlerts.length} total | ${unresolvedIncidents.length === 0 ? 'Verified Stable' : 'Attention Needed'} |`);
   lines.push(`| **Telemetry Completeness** | Continuous sampling coverage ratio | ${availabilityPct}% availability | ${parseFloat(availabilityPct) >= 99.0 ? 'Verified Stable' : 'Monitoring Gaps'} |`);
   lines.push('');
 
-  // 1. Longitudinal Stability & Performance Analysis (Verified Stable)
+  // 1. Verified Stable: only what retained snapshots show
   lines.push('## 1. Verified Stable Subsystems');
-  lines.push('Throughout the 7-day operational trial, the following core platform subsystems demonstrated deterministic reliability:');
-  lines.push('');
-  lines.push('1. **Durable Journaling & WAL Replay:**');
-  lines.push('   - Continuous append-only logging with chained SHA-256 hashes.');
-  lines.push('   - Synchronous fsync guaranteed on all critical state transitions.');
-  lines.push('   - Startup reconciliation successfully restored system state without duplicating tasks.');
-  lines.push('2. **Process Supervision & Orphan Isolation:**');
-  lines.push('   - Cross-platform process tracking (Windows/macOS/Linux) maintained exact child PID mappings.');
-  lines.push('   - Security abort triggered if an OS PID is recycled, completely preventing unauthorized signaling.');
-  lines.push('3. **Autonomous Guardrails & Budget Tracking:**');
-  lines.push('   - Quota limits (max executions, cost limits, max subtasks) halted loops before resource exhaustion.');
-  lines.push('   - Zero automatic privilege escalations detected.');
-  lines.push('4. **Emergency Stop Interlocking:**');
-  lines.push('   - Instantaneous trip tested with active provider dispatch cancellation confirmation.');
+  const stable = [];
+  if (walSeen.length && maxCorrupt === 0) stable.push(`- **WAL Journal:** zero corrupt records across ${walSeen.length} snapshots.`);
+  if (procSeen.length && maxOrphans === 0) stable.push(`- **Process Supervisor:** zero orphan processes across ${procSeen.length} snapshots.`);
+  if (stopSeen.length && halts === 0) stable.push(`- **Emergency Stop:** never halted across ${stopSeen.length} snapshots.`);
+  lines.push(stable.length
+    ? `Based on ${operationalSnapshots.length} snapshot(s) retained from the trial window:\n\n${stable.join('\n')}`
+    : `*No subsystem can be verified: ${operationalSnapshots.length} snapshot(s) from the trial window were retained.*`);
   lines.push('');
 
-  // Daily Breakdown Table if dailyReports or summaries exist
-  if (dailyReports.length > 0) {
+  if (hasStart) {
+    lines.push('### Daily Coverage Breakdown');
+    lines.push('| Day | Window (UTC) | Coverage | Unobserved | Snapshots Retained |');
+    lines.push('|---|---|---|---|---|');
+    for (let d = 1; d <= days; d++) {
+      const from = winFrom + (d - 1) * DAY_MS;
+      const to = from + DAY_MS;
+      const missing = gapMsInWindow(operationalGaps, from, to);
+      const kept = operationalSnapshots.filter((s) => s.timestamp >= from && s.timestamp < to).length;
+      lines.push(`| Day ${String(d).padStart(2, '0')} | ${formatTimestamp(from)} → ${formatTimestamp(to)} | ${((1 - missing / DAY_MS) * 100).toFixed(1)}% | ${formatDuration(missing)} | ${kept} |`);
+    }
+    lines.push('');
+  } else if (dailyReports.length > 0) {
     lines.push('### Daily Operational Summary Breakdown');
     lines.push('| Day | Snapshots | Alerts (Total / Sev-1 / Sev-2) | Gaps (Downtime) | Status |');
     lines.push('|---|---|---|---|---|');
@@ -460,14 +497,16 @@ export async function generateFinalAssessment({
 
   // 4. Monitoring Gaps
   lines.push('## 4. Monitoring Gaps');
-  if (gaps.length === 0) {
+  if (operationalGaps.length === 0) {
     lines.push('Zero telemetry gaps detected. Continuous 60-second sampling achieved 100.0% coverage.');
   } else {
-    lines.push(`During the 7-day trial, **${gaps.length}** gap interval(s) were identified (totaling ${formatDuration(totalGapDurationMs)} unmeasured downtime):`);
+    // Short blips are counted, not listed, so a long trial does not produce thousands of rows
+    const listed = operationalGaps.filter((g) => (g.durationMs || 0) >= 10 * 60 * 1000);
+    lines.push(`During the 7-day trial, **${operationalGaps.length}** gap interval(s) were identified (totaling ${formatDuration(totalGapDurationMs)} unmeasured time inside the window). Gaps of 10 minutes or more:`);
     lines.push('');
     lines.push('| Gap ID | Start Time | End Time | Duration | Missed 60s Intervals | Root Cause |');
     lines.push('|---|---|---|---|---|---|');
-    for (const g of gaps) {
+    for (const g of listed) {
       lines.push(`| \`${g.id}\` | ${formatTimestamp(g.startTime)} | ${formatTimestamp(g.endTime)} | ${formatDuration(g.durationMs)} | ${g.missedIntervals} | ${g.reason || 'Server reboot / maintenance'} |`);
     }
     lines.push('');
@@ -489,7 +528,7 @@ export async function generateFinalAssessment({
   lines.push('Based on the 7-day operational trial assessment, the following recommendations are submitted:');
   lines.push('');
   lines.push('### Operational Policies:');
-  lines.push('1. **Retain 60-Second Telemetry Polling:** The 60-second scheduler interval provides optimal anomaly detection without measurable CPU overhead (<0.5%).');
+  lines.push('1. **Retain 60-Second Telemetry Polling:** Keep the 60-second sampling interval (its CPU overhead was not measured in this trial).');
   lines.push('2. **Daily Report Automation:** Maintain automated end-of-day markdown generation for continuous auditing.');
   lines.push('3. **Alert Webhook Integration:** Route SEV-1 and SEV-2 alerts to external pager notifications for off-hours operational escalation.');
   lines.push('');
@@ -539,7 +578,7 @@ export function createTrialReportGenerator({
     async generateDailyReport(dayNumber, options = {}) {
       const snapshots = options.snapshots || (scheduler?.listSnapshots ? scheduler.listSnapshots({ limit: 10000 }) : scheduler?.snapshots || []);
       const alerts = options.alerts || (scheduler?.listAlerts ? scheduler.listAlerts({ limit: 10000 }) : scheduler?.alerts || []);
-      const gaps = options.gaps || (scheduler?.listGaps ? scheduler.listGaps({ limit: 1000 }) : scheduler?.gaps || []);
+      const gaps = options.gaps || (Array.isArray(scheduler?.gaps) ? scheduler.gaps : scheduler?.listGaps?.({ limit: 100000 }) || []); // all gaps: coverage needs the oldest too
       const trialStartAt = options.trialStartAt || scheduler?.trialStartAt || null;
       return generateDailyReport({
         dayNumber,
@@ -555,7 +594,7 @@ export function createTrialReportGenerator({
     async generateFinalAssessment(options = {}) {
       const snapshots = options.snapshots || (scheduler?.listSnapshots ? scheduler.listSnapshots({ limit: 10000 }) : scheduler?.snapshots || []);
       const alerts = options.alerts || (scheduler?.listAlerts ? scheduler.listAlerts({ limit: 10000 }) : scheduler?.alerts || []);
-      const gaps = options.gaps || (scheduler?.listGaps ? scheduler.listGaps({ limit: 1000 }) : scheduler?.gaps || []);
+      const gaps = options.gaps || (Array.isArray(scheduler?.gaps) ? scheduler.gaps : scheduler?.listGaps?.({ limit: 100000 }) || []); // all gaps: coverage needs the oldest too
       const trialStartAt = options.trialStartAt || scheduler?.trialStartAt || null;
       return generateFinalAssessment({
         snapshots,
